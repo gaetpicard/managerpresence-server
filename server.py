@@ -1,14 +1,16 @@
 """
 ManagerPresence - Serveur de Licences
 Déployé sur Render.com
-Stockage persistant via JSONBin.io
+Stockage persistant via Firebase Firestore
 """
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
 import os
-import requests
+import json
+import firebase_admin
+from firebase_admin import credentials, firestore
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -30,11 +32,19 @@ SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", "")
 
-# JSONBin.io Configuration
-JSONBIN_API_KEY = os.environ.get("JSONBIN_API_KEY", "$2a$10$aQwJ5fJY55JpEBWs4saSh.u07YdpziWPFjhEmWRc6s.3WBvJ8bmVm")
-JSONBIN_LICENCES_ID = os.environ.get("JSONBIN_LICENCES_ID", "69b82a75c3097a1dd52e2011")
-JSONBIN_CODES_ID = os.environ.get("JSONBIN_CODES_ID", "69b82a9cb7ec241ddc73702b")
-JSONBIN_URL = "https://api.jsonbin.io/v3/b"
+# Firebase Configuration
+FIREBASE_CREDENTIALS = os.environ.get("FIREBASE_CREDENTIALS", "")
+
+# Initialiser Firebase
+if FIREBASE_CREDENTIALS:
+    cred_dict = json.loads(FIREBASE_CREDENTIALS)
+    cred = credentials.Certificate(cred_dict)
+else:
+    # Fallback pour dev local
+    cred = credentials.Certificate("serviceAccountKey.json")
+
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
 # ============================================================
 # DÉFINITION DES PLANS
@@ -69,69 +79,66 @@ CODE_TYPES = {
 }
 
 # ============================================================
-# UTILITAIRES - STOCKAGE JSONBIN
+# UTILITAIRES - STOCKAGE FIREBASE
 # ============================================================
 
-def jsonbin_headers():
-    """Headers pour les requêtes JSONBin"""
-    return {
-        "X-Master-Key": JSONBIN_API_KEY,
-        "Content-Type": "application/json"
-    }
-
 def charger_licences():
-    """Charge les licences depuis JSONBin"""
+    """Charge toutes les licences depuis Firestore"""
     try:
-        response = requests.get(
-            f"{JSONBIN_URL}/{JSONBIN_LICENCES_ID}/latest",
-            headers=jsonbin_headers()
-        )
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("record", {}).get("licences", {})
+        docs = db.collection("licences").stream()
+        return {doc.id: doc.to_dict() for doc in docs}
     except Exception as e:
         print(f"Erreur chargement licences: {e}")
-    return {}
+        return {}
 
-def sauvegarder_licences(licences):
-    """Sauvegarde les licences dans JSONBin"""
+def sauvegarder_licence(project_id, licence):
+    """Sauvegarde une licence dans Firestore"""
     try:
-        response = requests.put(
-            f"{JSONBIN_URL}/{JSONBIN_LICENCES_ID}",
-            headers=jsonbin_headers(),
-            json={"licences": licences}
-        )
-        return response.status_code == 200
+        db.collection("licences").document(project_id).set(licence)
+        return True
     except Exception as e:
-        print(f"Erreur sauvegarde licences: {e}")
+        print(f"Erreur sauvegarde licence: {e}")
         return False
+
+def charger_licence(project_id):
+    """Charge une licence spécifique"""
+    try:
+        doc = db.collection("licences").document(project_id).get()
+        if doc.exists:
+            return doc.to_dict()
+        return None
+    except Exception as e:
+        print(f"Erreur chargement licence: {e}")
+        return None
 
 def charger_codes():
-    """Charge les codes depuis JSONBin"""
+    """Charge tous les codes depuis Firestore"""
     try:
-        response = requests.get(
-            f"{JSONBIN_URL}/{JSONBIN_CODES_ID}/latest",
-            headers=jsonbin_headers()
-        )
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("record", {}).get("codes", {})
+        docs = db.collection("codes").stream()
+        return {doc.id: doc.to_dict() for doc in docs}
     except Exception as e:
         print(f"Erreur chargement codes: {e}")
-    return {}
+        return {}
 
-def sauvegarder_codes(codes):
-    """Sauvegarde les codes dans JSONBin"""
+def sauvegarder_code(code, info):
+    """Sauvegarde un code dans Firestore"""
     try:
-        response = requests.put(
-            f"{JSONBIN_URL}/{JSONBIN_CODES_ID}",
-            headers=jsonbin_headers(),
-            json={"codes": codes}
-        )
-        return response.status_code == 200
+        db.collection("codes").document(code).set(info)
+        return True
     except Exception as e:
-        print(f"Erreur sauvegarde codes: {e}")
+        print(f"Erreur sauvegarde code: {e}")
         return False
+
+def charger_code(code):
+    """Charge un code spécifique"""
+    try:
+        doc = db.collection("codes").document(code).get()
+        if doc.exists:
+            return doc.to_dict()
+        return None
+    except Exception as e:
+        print(f"Erreur chargement code: {e}")
+        return None
 
 # ============================================================
 # UTILITAIRES - NOTIFICATIONS
@@ -251,16 +258,15 @@ def health():
 @app.route("/licence/<project_id>", methods=["GET"])
 def get_licence(project_id):
     """Récupère la licence d'un projet (crée un trial si inconnu)"""
-    licences = charger_licences()
+    licence = charger_licence(project_id)
     
-    if project_id not in licences:
+    if licence is None:
         # Nouveau client → créer licence trial
         nom_structure = request.args.get("nom", "")
         licence = creer_licence_trial(project_id, nom_structure)
-        licences[project_id] = licence
-        sauvegarder_licences(licences)
+        sauvegarder_licence(project_id, licence)
     
-    return jsonify(formater_licence_response(licences[project_id]))
+    return jsonify(formater_licence_response(licence))
 
 @app.route("/licence/<project_id>/code", methods=["POST"])
 def activer_code(project_id):
@@ -271,24 +277,20 @@ def activer_code(project_id):
     if not code:
         return jsonify({"error": "Code manquant"}), 400
     
-    # Charger les codes
-    codes = charger_codes()
+    # Charger le code
+    code_info = charger_code(code)
     
-    if code not in codes:
+    if code_info is None:
         return jsonify({"error": "Code invalide"}), 404
-    
-    code_info = codes[code]
     
     if code_info.get("utilise"):
         return jsonify({"error": "Code déjà utilisé"}), 400
     
-    # Charger les licences
-    licences = charger_licences()
+    # Charger la licence
+    licence = charger_licence(project_id)
     
-    if project_id not in licences:
-        licences[project_id] = creer_licence_trial(project_id)
-    
-    licence = licences[project_id]
+    if licence is None:
+        licence = creer_licence_trial(project_id)
     
     # Appliquer le code
     code_type = code_info.get("type")
@@ -318,13 +320,13 @@ def activer_code(project_id):
     licence["message"] = f"Code {code} activé avec succès !"
     
     # Marquer le code comme utilisé
-    codes[code]["utilise"] = True
-    codes[code]["utilise_par"] = project_id
-    codes[code]["utilise_le"] = datetime.now().isoformat()
+    code_info["utilise"] = True
+    code_info["utilise_par"] = project_id
+    code_info["utilise_le"] = datetime.now().isoformat()
     
     # Sauvegarder
-    sauvegarder_licences(licences)
-    sauvegarder_codes(codes)
+    sauvegarder_licence(project_id, licence)
+    sauvegarder_code(code, code_info)
     
     # Notification
     envoyer_notification(
@@ -378,13 +380,13 @@ def admin_gencode():
     while nouveau_code in codes:
         nouveau_code = generer_code(config["prefixe"])
     
-    codes[nouveau_code] = {
+    code_info = {
         "type": code_type,
         "cree_le": datetime.now().isoformat(),
         "utilise": False
     }
     
-    sauvegarder_codes(codes)
+    sauvegarder_code(nouveau_code, code_info)
     
     return jsonify({
         "code": nouveau_code,
@@ -411,12 +413,10 @@ def admin_update_licence(project_id):
         return jsonify({"error": "Non autorisé"}), 401
     
     data = request.get_json() or {}
-    licences = charger_licences()
+    licence = charger_licence(project_id)
     
-    if project_id not in licences:
+    if licence is None:
         return jsonify({"error": "Licence non trouvée"}), 404
-    
-    licence = licences[project_id]
     
     if "plan" in data and data["plan"] in PLANS:
         nouveau_plan = data["plan"]
@@ -450,7 +450,7 @@ def admin_update_licence(project_id):
     if "message" in data:
         licence["message"] = data["message"]
     
-    sauvegarder_licences(licences)
+    sauvegarder_licence(project_id, licence)
     
     return jsonify({"success": True, "licence": formater_licence_response(licence)})
 
