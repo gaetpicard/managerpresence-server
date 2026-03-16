@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: managerpresence-licences
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app
+    plan: free
+    envVars:
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: SMTP_EMAIL
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: NOTIFY_EMAIL
+        sync: false
