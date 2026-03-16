@@ -1,13 +1,14 @@
 """
 ManagerPresence - Serveur de Licences
 Déployé sur Render.com
+Stockage persistant via JSONBin.io
 """
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
-import json
 import os
+import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -25,13 +26,15 @@ CORS(app)
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "dev_token_change_me")
 
 # Email pour notifications (à définir dans les variables d'environnement)
-SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "cp.support.dev@gmail.com")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")  # App password Gmail
-NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", "cp.support.dev@gmail.com")
+SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", "")
 
-# Fichier de stockage (en production, utiliser une vraie BDD)
-DATA_FILE = "licences.json"
-CODES_FILE = "codes.json"
+# JSONBin.io Configuration
+JSONBIN_API_KEY = os.environ.get("JSONBIN_API_KEY", "$2a$10$aQwJ5fJY55JpEBWs4saSh.u07YdpziWPFjhEmWRc6s.3WBvJ8bmVm")
+JSONBIN_LICENCES_ID = os.environ.get("JSONBIN_LICENCES_ID", "69b82a75c3097a1dd52e2011")
+JSONBIN_CODES_ID = os.environ.get("JSONBIN_CODES_ID", "69b82a9cb7ec241ddc73702b")
+JSONBIN_URL = "https://api.jsonbin.io/v3/b"
 
 # ============================================================
 # DÉFINITION DES PLANS
@@ -58,52 +61,77 @@ PLANS = {
 
 # Types de codes d'activation
 CODE_TYPES = {
-    "PREMIUM_PERMANENT": {"plan": "premium", "jours": 36500, "prefixe": "PRM"},  # 100 ans ≈ permanent
+    "PREMIUM_PERMANENT": {"plan": "premium", "jours": 36500, "prefixe": "PRM"},
     "PREMIUM_1AN": {"plan": "premium", "jours": 365, "prefixe": "PR1"},
     "STANDARD_1AN": {"plan": "standard", "jours": 365, "prefixe": "ST1"},
-    "PROLONGATION_60J": {"plan": None, "jours": 60, "prefixe": "P60"},  # Prolonge le plan actuel
+    "PROLONGATION_60J": {"plan": None, "jours": 60, "prefixe": "P60"},
     "PROLONGATION_30J": {"plan": None, "jours": 30, "prefixe": "P30"},
 }
 
 # ============================================================
-# UTILITAIRES - STOCKAGE
+# UTILITAIRES - STOCKAGE JSONBIN
 # ============================================================
 
+def jsonbin_headers():
+    """Headers pour les requêtes JSONBin"""
+    return {
+        "X-Master-Key": JSONBIN_API_KEY,
+        "Content-Type": "application/json"
+    }
+
 def charger_licences():
-    """Charge les licences depuis le fichier JSON"""
+    """Charge les licences depuis JSONBin"""
     try:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r") as f:
-                return json.load(f)
+        response = requests.get(
+            f"{JSONBIN_URL}/{JSONBIN_LICENCES_ID}/latest",
+            headers=jsonbin_headers()
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("record", {}).get("licences", {})
     except Exception as e:
         print(f"Erreur chargement licences: {e}")
     return {}
 
 def sauvegarder_licences(licences):
-    """Sauvegarde les licences dans le fichier JSON"""
+    """Sauvegarde les licences dans JSONBin"""
     try:
-        with open(DATA_FILE, "w") as f:
-            json.dump(licences, f, indent=2, default=str)
+        response = requests.put(
+            f"{JSONBIN_URL}/{JSONBIN_LICENCES_ID}",
+            headers=jsonbin_headers(),
+            json={"licences": licences}
+        )
+        return response.status_code == 200
     except Exception as e:
         print(f"Erreur sauvegarde licences: {e}")
+        return False
 
 def charger_codes():
-    """Charge les codes d'activation depuis le fichier JSON"""
+    """Charge les codes depuis JSONBin"""
     try:
-        if os.path.exists(CODES_FILE):
-            with open(CODES_FILE, "r") as f:
-                return json.load(f)
+        response = requests.get(
+            f"{JSONBIN_URL}/{JSONBIN_CODES_ID}/latest",
+            headers=jsonbin_headers()
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("record", {}).get("codes", {})
     except Exception as e:
         print(f"Erreur chargement codes: {e}")
     return {}
 
 def sauvegarder_codes(codes):
-    """Sauvegarde les codes d'activation"""
+    """Sauvegarde les codes dans JSONBin"""
     try:
-        with open(CODES_FILE, "w") as f:
-            json.dump(codes, f, indent=2, default=str)
+        response = requests.put(
+            f"{JSONBIN_URL}/{JSONBIN_CODES_ID}",
+            headers=jsonbin_headers(),
+            json={"codes": codes}
+        )
+        return response.status_code == 200
     except Exception as e:
         print(f"Erreur sauvegarde codes: {e}")
+        return False
 
 # ============================================================
 # UTILITAIRES - NOTIFICATIONS
@@ -111,7 +139,7 @@ def sauvegarder_codes(codes):
 
 def envoyer_notification(sujet, message):
     """Envoie un email de notification"""
-    if not SMTP_PASSWORD:
+    if not SMTP_PASSWORD or not SMTP_EMAIL:
         print(f"[NOTIFICATION] {sujet}: {message}")
         return False
     
@@ -241,24 +269,23 @@ def activer_code(project_id):
     code = data.get("code", "").strip().upper()
     
     if not code:
-        return jsonify({"erreur": "Code manquant"}), 400
+        return jsonify({"error": "Code manquant"}), 400
     
     # Charger les codes
     codes = charger_codes()
     
     if code not in codes:
-        return jsonify({"erreur": "Code invalide"}), 404
+        return jsonify({"error": "Code invalide"}), 404
     
     code_info = codes[code]
     
     if code_info.get("utilise"):
-        return jsonify({"erreur": "Code déjà utilisé"}), 400
+        return jsonify({"error": "Code déjà utilisé"}), 400
     
     # Charger les licences
     licences = charger_licences()
     
     if project_id not in licences:
-        # Créer une licence si elle n'existe pas
         licences[project_id] = creer_licence_trial(project_id)
     
     licence = licences[project_id]
@@ -268,7 +295,6 @@ def activer_code(project_id):
     type_config = CODE_TYPES.get(code_type, {})
     
     if type_config.get("plan"):
-        # Changer de plan
         nouveau_plan = type_config["plan"]
         plan_config = PLANS[nouveau_plan]
         licence["plan"] = nouveau_plan
@@ -276,7 +302,6 @@ def activer_code(project_id):
         licence["maxCadres"] = plan_config["max_cadres"]
         licence["dateExpiration"] = (datetime.now() + timedelta(days=type_config["jours"])).isoformat()
     else:
-        # Prolongation du plan actuel
         try:
             date_exp_actuelle = datetime.fromisoformat(licence["dateExpiration"].replace("Z", "+00:00"))
             if date_exp_actuelle.tzinfo:
@@ -284,7 +309,6 @@ def activer_code(project_id):
         except:
             date_exp_actuelle = datetime.now()
         
-        # Si déjà expiré, partir d'aujourd'hui
         if date_exp_actuelle < datetime.now():
             date_exp_actuelle = datetime.now()
         
@@ -309,7 +333,7 @@ def activer_code(project_id):
     )
     
     return jsonify({
-        "succes": True,
+        "success": True,
         "message": f"Code activé ! Vous êtes maintenant en plan {PLANS[licence['plan']]['nom']}.",
         "licence": formater_licence_response(licence)
     })
@@ -327,46 +351,33 @@ def verifier_admin():
 def admin_liste():
     """Liste toutes les licences"""
     if not verifier_admin():
-        return jsonify({"erreur": "Non autorisé"}), 401
+        return jsonify({"error": "Non autorisé"}), 401
     
     licences = charger_licences()
-    liste = []
-    
-    for project_id, licence in licences.items():
-        liste.append(formater_licence_response(licence))
-    
-    # Trier par date d'inscription (plus récent en premier)
+    liste = [formater_licence_response(l) for l in licences.values()]
     liste.sort(key=lambda x: x.get("dateExpiration", ""), reverse=True)
     
-    return jsonify({
-        "total": len(liste),
-        "licences": liste
-    })
+    return jsonify({"total": len(liste), "licences": liste})
 
 @app.route("/admin/gencode", methods=["POST"])
 def admin_gencode():
     """Génère un nouveau code d'activation"""
     if not verifier_admin():
-        return jsonify({"erreur": "Non autorisé"}), 401
+        return jsonify({"error": "Non autorisé"}), 401
     
     data = request.get_json() or {}
     code_type = data.get("type", "").upper()
     
     if code_type not in CODE_TYPES:
-        return jsonify({
-            "erreur": f"Type invalide. Types disponibles: {list(CODE_TYPES.keys())}"
-        }), 400
+        return jsonify({"error": f"Type invalide. Types: {list(CODE_TYPES.keys())}"}), 400
     
-    # Générer le code
     config = CODE_TYPES[code_type]
     codes = charger_codes()
     
-    # S'assurer que le code est unique
     nouveau_code = generer_code(config["prefixe"])
     while nouveau_code in codes:
         nouveau_code = generer_code(config["prefixe"])
     
-    # Enregistrer le code
     codes[nouveau_code] = {
         "type": code_type,
         "cree_le": datetime.now().isoformat(),
@@ -385,44 +396,28 @@ def admin_gencode():
 def admin_codes():
     """Liste tous les codes"""
     if not verifier_admin():
-        return jsonify({"erreur": "Non autorisé"}), 401
+        return jsonify({"error": "Non autorisé"}), 401
     
     codes = charger_codes()
-    
-    liste = []
-    for code, info in codes.items():
-        liste.append({
-            "code": code,
-            "type": info.get("type"),
-            "cree_le": info.get("cree_le"),
-            "utilise": info.get("utilise", False),
-            "utilise_par": info.get("utilise_par"),
-            "utilise_le": info.get("utilise_le")
-        })
-    
-    # Trier par date de création
+    liste = [{"code": c, **info} for c, info in codes.items()]
     liste.sort(key=lambda x: x.get("cree_le", ""), reverse=True)
     
-    return jsonify({
-        "total": len(liste),
-        "codes": liste
-    })
+    return jsonify({"total": len(liste), "codes": liste})
 
 @app.route("/licence/<project_id>", methods=["POST"])
 def admin_update_licence(project_id):
     """Met à jour une licence (admin)"""
     if not verifier_admin():
-        return jsonify({"erreur": "Non autorisé"}), 401
+        return jsonify({"error": "Non autorisé"}), 401
     
     data = request.get_json() or {}
     licences = charger_licences()
     
     if project_id not in licences:
-        return jsonify({"erreur": "Licence non trouvée"}), 404
+        return jsonify({"error": "Licence non trouvée"}), 404
     
     licence = licences[project_id]
     
-    # Mettre à jour les champs fournis
     if "plan" in data and data["plan"] in PLANS:
         nouveau_plan = data["plan"]
         plan_config = PLANS[nouveau_plan]
@@ -457,22 +452,12 @@ def admin_update_licence(project_id):
     
     sauvegarder_licences(licences)
     
-    return jsonify({
-        "succes": True,
-        "licence": formater_licence_response(licence)
-    })
+    return jsonify({"success": True, "licence": formater_licence_response(licence)})
 
 # ============================================================
 # DÉMARRAGE
 # ============================================================
 
 if __name__ == "__main__":
-    # Créer les fichiers s'ils n'existent pas
-    if not os.path.exists(DATA_FILE):
-        sauvegarder_licences({})
-    if not os.path.exists(CODES_FILE):
-        sauvegarder_codes({})
-    
-    # Démarrer le serveur
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
