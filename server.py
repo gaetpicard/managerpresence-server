@@ -454,6 +454,53 @@ def admin_update_licence(project_id):
     
     return jsonify({"success": True, "licence": formater_licence_response(licence)})
 
+
+@app.route("/admin/licence/<project_id>", methods=["PUT"])
+def admin_edit_licence(project_id):
+    """Modifie une licence existante (admin) - endpoint dédié"""
+    if not verifier_admin():
+        return jsonify({"error": "Non autorisé"}), 401
+    
+    data = request.get_json() or {}
+    licence = charger_licence(project_id)
+    
+    if licence is None:
+        return jsonify({"error": "Licence non trouvée"}), 404
+    
+    # Mettre à jour le plan si spécifié
+    if "plan" in data and data["plan"] in PLANS:
+        nouveau_plan = data["plan"]
+        plan_config = PLANS[nouveau_plan]
+        licence["plan"] = nouveau_plan
+        licence["fonctionnalites"] = plan_config["fonctionnalites"]
+        # Garder maxCadres personnalisé si spécifié
+        if "maxCadres" not in data:
+            licence["maxCadres"] = plan_config["max_cadres"]
+    
+    # Mettre à jour la durée si spécifiée (repart de maintenant)
+    if "duree" in data:
+        duree_jours = int(data["duree"])
+        licence["dateExpiration"] = (datetime.now() + timedelta(days=duree_jours)).isoformat()
+        licence["actif"] = True
+    
+    # Mettre à jour maxCadres si spécifié
+    if "maxCadres" in data:
+        licence["maxCadres"] = int(data["maxCadres"])
+    
+    # Mettre à jour le nom si spécifié
+    if "nomStructure" in data:
+        licence["nomStructure"] = data["nomStructure"]
+    
+    sauvegarder_licence(project_id, licence)
+    
+    # Notification
+    envoyer_notification(
+        "✏️ Licence modifiée",
+        f"Une licence a été modifiée manuellement.\n\nProject ID: {project_id}\nNouveau plan: {licence.get('plan')}\nExpiration: {licence.get('dateExpiration')}"
+    )
+    
+    return jsonify({"success": True, "licence": formater_licence_response(licence)})
+
 # ============================================================
 # DÉMARRAGE
 # ============================================================
