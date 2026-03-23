@@ -78,6 +78,9 @@ CODE_TYPES = {
     "PROLONGATION_30J": {"plan": None, "jours": 30, "prefixe": "P30"},
 }
 
+# Durée de validité des codes PWA (en secondes)
+PWA_CODE_VALIDITY = 600  # 10 minutes
+
 # ============================================================
 # UTILITAIRES - STOCKAGE FIREBASE
 # ============================================================
@@ -139,6 +142,49 @@ def charger_code(code):
     except Exception as e:
         print(f"Erreur chargement code: {e}")
         return None
+
+# ============================================================
+# UTILITAIRES - CODES PWA
+# ============================================================
+
+def sauvegarder_pwa_code(code, data):
+    """Sauvegarde un code PWA temporaire dans Firestore"""
+    try:
+        db.collection("pwa_codes").document(code).set(data)
+        return True
+    except Exception as e:
+        print(f"Erreur sauvegarde code PWA: {e}")
+        return False
+
+def charger_pwa_code(code):
+    """Charge un code PWA spécifique"""
+    try:
+        doc = db.collection("pwa_codes").document(code).get()
+        if doc.exists:
+            return doc.to_dict()
+        return None
+    except Exception as e:
+        print(f"Erreur chargement code PWA: {e}")
+        return None
+
+def supprimer_pwa_code(code):
+    """Supprime un code PWA après utilisation"""
+    try:
+        db.collection("pwa_codes").document(code).delete()
+        return True
+    except Exception as e:
+        print(f"Erreur suppression code PWA: {e}")
+        return False
+
+def nettoyer_codes_expires():
+    """Supprime les codes PWA expirés (appelé périodiquement)"""
+    try:
+        now = datetime.now().timestamp() * 1000  # en millisecondes
+        expired = db.collection("pwa_codes").where("expiresAt", "<", now).stream()
+        for doc in expired:
+            doc.reference.delete()
+    except Exception as e:
+        print(f"Erreur nettoyage codes PWA: {e}")
 
 # ============================================================
 # UTILITAIRES - NOTIFICATIONS
@@ -341,6 +387,186 @@ def activer_code(project_id):
     })
 
 # ============================================================
+# ROUTES PWA - Accès sécurisé temporaire
+# ============================================================
+
+@app.route("/pwa/generate", methods=["POST"])
+def pwa_generate():
+    """
+    Génère et stocke un code PWA temporaire.
+    Appelé par l'app Android quand un admin génère un code.
+    
+    Body JSON attendu:
+    {
+        "projectId": "presence-en-cours",
+        "code": "PRES-AB12",
+        "generatedBy": "Jean",
+        "clubName": "École Vilpy",
+        "firebaseConfig": {
+            "apiKey": "...",
+            "authDomain": "...",
+            "projectId": "...",
+            "storageBucket": "...",
+            "messagingSenderId": "...",
+            "appId": "..."
+        }
+    }
+    """
+    data = request.get_json() or {}
+    
+    # Validation des champs requis
+    required_fields = ["projectId", "code", "firebaseConfig"]
+    for field in required_fields:
+        if not data.get(field):
+            return jsonify({"error": f"Champ manquant: {field}"}), 400
+    
+    project_id = data["projectId"]
+    code = data["code"].upper()
+    generated_by = data.get("generatedBy", "Admin")
+    club_name = data.get("clubName", "")
+    firebase_config = data["firebaseConfig"]
+    
+    # Vérifier que le projet a une licence valide (trial ou premium)
+    licence = charger_licence(project_id)
+    if licence:
+        plan = licence.get("plan", "trial")
+        if plan == "standard":
+            return jsonify({"error": "L'accès PWA nécessite une licence Trial ou Premium"}), 403
+        
+        jours_restants = calculer_jours_restants(licence.get("dateExpiration", ""))
+        if jours_restants <= 0:
+            return jsonify({"error": "Licence expirée"}), 403
+    
+    # Calculer l'expiration (10 minutes)
+    now = datetime.now()
+    expires_at = now + timedelta(seconds=PWA_CODE_VALIDITY)
+    expires_at_ms = int(expires_at.timestamp() * 1000)
+    
+    # Stocker le code avec la config Firebase
+    pwa_data = {
+        "projectId": project_id,
+        "code": code,
+        "generatedBy": generated_by,
+        "clubName": club_name,
+        "firebaseConfig": firebase_config,
+        "createdAt": now.isoformat(),
+        "expiresAt": expires_at_ms,
+        "used": False
+    }
+    
+    if not sauvegarder_pwa_code(code, pwa_data):
+        return jsonify({"error": "Erreur serveur lors de la sauvegarde"}), 500
+    
+    # Nettoyer les anciens codes expirés (maintenance)
+    nettoyer_codes_expires()
+    
+    return jsonify({
+        "success": True,
+        "code": code,
+        "expiresAt": expires_at_ms,
+        "validitySeconds": PWA_CODE_VALIDITY
+    }), 201
+
+
+@app.route("/pwa/verify", methods=["POST"])
+def pwa_verify():
+    """
+    Vérifie un code PWA et retourne la config Firebase si valide.
+    Appelé par la PWA quand un utilisateur entre un code.
+    
+    Body JSON attendu:
+    {
+        "code": "PRES-AB12"
+    }
+    
+    Retourne:
+    {
+        "success": true,
+        "projectId": "presence-en-cours",
+        "clubName": "École Vilpy",
+        "firebaseConfig": { ... },
+        "generatedBy": "Jean"
+    }
+    """
+    data = request.get_json() or {}
+    code = data.get("code", "").strip().upper()
+    
+    if not code:
+        return jsonify({"error": "Code manquant"}), 400
+    
+    # Charger le code
+    pwa_data = charger_pwa_code(code)
+    
+    if pwa_data is None:
+        return jsonify({"error": "Code invalide ou expiré"}), 404
+    
+    # Vérifier l'expiration
+    now_ms = int(datetime.now().timestamp() * 1000)
+    expires_at = pwa_data.get("expiresAt", 0)
+    
+    if now_ms > expires_at:
+        # Code expiré → le supprimer
+        supprimer_pwa_code(code)
+        return jsonify({"error": "Code expiré"}), 410  # 410 Gone
+    
+    # Vérifier si déjà utilisé
+    if pwa_data.get("used", False):
+        return jsonify({"error": "Code déjà utilisé"}), 400
+    
+    # Marquer comme utilisé
+    pwa_data["used"] = True
+    pwa_data["usedAt"] = datetime.now().isoformat()
+    sauvegarder_pwa_code(code, pwa_data)
+    
+    # Récupérer les infos de licence pour les transmettre
+    project_id = pwa_data.get("projectId", "")
+    licence = charger_licence(project_id)
+    licence_info = formater_licence_response(licence) if licence else None
+    
+    # Retourner la config Firebase
+    return jsonify({
+        "success": True,
+        "projectId": project_id,
+        "clubName": pwa_data.get("clubName", ""),
+        "firebaseConfig": pwa_data.get("firebaseConfig", {}),
+        "generatedBy": pwa_data.get("generatedBy", ""),
+        "licence": licence_info
+    })
+
+
+@app.route("/pwa/status/<code>", methods=["GET"])
+def pwa_status(code):
+    """
+    Vérifie le statut d'un code PWA (pour l'app Android).
+    Permet de savoir si le code a été utilisé.
+    """
+    code = code.upper()
+    pwa_data = charger_pwa_code(code)
+    
+    if pwa_data is None:
+        return jsonify({"exists": False, "status": "not_found"})
+    
+    now_ms = int(datetime.now().timestamp() * 1000)
+    expires_at = pwa_data.get("expiresAt", 0)
+    
+    if now_ms > expires_at:
+        return jsonify({"exists": True, "status": "expired"})
+    
+    if pwa_data.get("used", False):
+        return jsonify({
+            "exists": True,
+            "status": "used",
+            "usedAt": pwa_data.get("usedAt", "")
+        })
+    
+    remaining_seconds = int((expires_at - now_ms) / 1000)
+    return jsonify({
+        "exists": True,
+        "status": "active",
+        "remainingSeconds": remaining_seconds
+    })
+
+# ============================================================
 # ROUTES ADMIN (protégées par token)
 # ============================================================
 
@@ -405,6 +631,35 @@ def admin_codes():
     liste.sort(key=lambda x: x.get("cree_le", ""), reverse=True)
     
     return jsonify({"total": len(liste), "codes": liste})
+
+@app.route("/admin/pwa-codes", methods=["GET"])
+def admin_pwa_codes():
+    """Liste tous les codes PWA actifs (admin)"""
+    if not verifier_admin():
+        return jsonify({"error": "Non autorisé"}), 401
+    
+    try:
+        docs = db.collection("pwa_codes").stream()
+        codes = []
+        now_ms = int(datetime.now().timestamp() * 1000)
+        
+        for doc in docs:
+            data = doc.to_dict()
+            expires_at = data.get("expiresAt", 0)
+            status = "expired" if now_ms > expires_at else ("used" if data.get("used") else "active")
+            codes.append({
+                "code": doc.id,
+                "projectId": data.get("projectId", ""),
+                "clubName": data.get("clubName", ""),
+                "generatedBy": data.get("generatedBy", ""),
+                "createdAt": data.get("createdAt", ""),
+                "status": status
+            })
+        
+        codes.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+        return jsonify({"total": len(codes), "codes": codes})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/licence/<project_id>", methods=["POST"])
 def admin_update_licence(project_id):
