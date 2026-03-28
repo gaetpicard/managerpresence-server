@@ -3,6 +3,7 @@ ManagerPresence - Serveur de Licences + Stripe
 Déployé sur Render.com
 Stockage persistant via Firebase Firestore
 Paiements via Stripe
+Version 2.0.0
 """
 
 from flask import Flask, request, jsonify, redirect
@@ -22,548 +23,987 @@ import stripe
 app = Flask(__name__)
 CORS(app)
 
-ADMIN_TOKEN       = os.environ.get("ADMIN_TOKEN", "dev_token_change_me")
-SMTP_EMAIL        = os.environ.get("SMTP_EMAIL", "")
-SMTP_PASSWORD     = os.environ.get("SMTP_PASSWORD", "")
-NOTIFY_EMAIL      = os.environ.get("NOTIFY_EMAIL", "")
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "dev_token_change_me")
+
+SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", "")
+
 FIREBASE_CREDENTIALS = os.environ.get("FIREBASE_CREDENTIALS", "")
-stripe.api_key    = os.environ.get("STRIPE_SECRET_KEY", "")
+
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLIC_KEY = os.environ.get("STRIPE_PUBLIC_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+
 STRIPE_PRICES = {
     "standard_monthly": os.environ.get("STRIPE_PRICE_STANDARD_MONTHLY", ""),
     "standard_yearly":  os.environ.get("STRIPE_PRICE_STANDARD_YEARLY", ""),
     "premium_monthly":  os.environ.get("STRIPE_PRICE_PREMIUM_MONTHLY", ""),
     "premium_yearly":   os.environ.get("STRIPE_PRICE_PREMIUM_YEARLY", ""),
 }
+
 PWA_SUCCESS_URL = os.environ.get("PWA_SUCCESS_URL", "https://managerpresence.netlify.app/paiement-reussi")
 PWA_CANCEL_URL  = os.environ.get("PWA_CANCEL_URL",  "https://managerpresence.netlify.app/abonnement")
 
+# Initialiser Firebase
 if FIREBASE_CREDENTIALS:
-    cred = credentials.Certificate(json.loads(FIREBASE_CREDENTIALS))
+    cred_dict = json.loads(FIREBASE_CREDENTIALS)
+    cred = credentials.Certificate(cred_dict)
 else:
     cred = credentials.Certificate("serviceAccountKey.json")
+
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
+# ============================================================
+# DÉFINITION DES PLANS
+# ============================================================
+
 PLANS = {
     "trial": {
-        "nom": "Essai gratuit (40 jours)", "duree_jours": 40,
-        "fonctionnalites": ["tableau","eleves","creneaux","export","forum","cadres_illimite","import","sms","perso","doc","pwa","stats","backup_auto","periodes","support"],
-        "max_cadres": 999, "max_membres": 9999, "max_creneaux": 9999
+        "nom": "Essai gratuit (40 jours)",
+        "duree_jours": 40,
+        "fonctionnalites": [
+            "tableau", "eleves", "creneaux", "export", "forum",
+            "cadres_illimite", "import", "sms", "perso", "doc",
+            "pwa", "stats", "backup_auto", "periodes", "support"
+        ],
+        "max_cadres": 999,
+        "max_membres": 9999,
+        "max_creneaux": 9999
     },
     "standard": {
         "nom": "Standard",
-        "fonctionnalites": ["tableau","eleves","creneaux","forum","email","backup_manuel","audit"],
-        "max_cadres": 3, "max_membres": 25, "max_creneaux": 5
+        "fonctionnalites": [
+            "tableau", "eleves", "creneaux", "forum",
+            "email", "backup_manuel", "audit"
+        ],
+        "max_cadres": 3,
+        "max_membres": 25,
+        "max_creneaux": 5
     },
     "premium": {
         "nom": "Premium",
-        "fonctionnalites": ["tableau","eleves","creneaux","export","forum","cadres_illimite","import","sms","perso","doc","pwa","stats","backup_auto","periodes","support","email","backup_manuel","audit"],
-        "max_cadres": 999, "max_membres": 9999, "max_creneaux": 9999
+        "fonctionnalites": [
+            "tableau", "eleves", "creneaux", "export", "forum",
+            "cadres_illimite", "import", "sms", "perso", "doc",
+            "pwa", "stats", "backup_auto", "periodes", "support",
+            "email", "backup_manuel", "audit"
+        ],
+        "max_cadres": 999,
+        "max_membres": 9999,
+        "max_creneaux": 9999
     }
 }
 
 CODE_TYPES = {
-    "PREMIUM_PERMANENT": {"plan":"premium",  "jours":36500, "prefixe":"PRM"},
-    "PREMIUM_1AN":       {"plan":"premium",  "jours":365,   "prefixe":"PR1"},
-    "STANDARD_1AN":      {"plan":"standard", "jours":365,   "prefixe":"ST1"},
-    "PROLONGATION_60J":  {"plan":None,       "jours":60,    "prefixe":"P60"},
-    "PROLONGATION_30J":  {"plan":None,       "jours":30,    "prefixe":"P30"},
+    "PREMIUM_PERMANENT": {"plan": "premium", "jours": 36500, "prefixe": "PRM"},
+    "PREMIUM_1AN":       {"plan": "premium", "jours": 365,   "prefixe": "PR1"},
+    "STANDARD_1AN":      {"plan": "standard","jours": 365,   "prefixe": "ST1"},
+    "PROLONGATION_60J":  {"plan": None,      "jours": 60,    "prefixe": "P60"},
+    "PROLONGATION_30J":  {"plan": None,      "jours": 30,    "prefixe": "P30"},
 }
 
-PWA_CODE_VALIDITY = 600
+PWA_CODE_VALIDITY = 600  # 10 minutes
 
-# ── Firebase helpers ──────────────────────────────────────
-
-def charger_licence(pid):
-    try:
-        doc = db.collection("licences").document(pid).get()
-        return doc.to_dict() if doc.exists else None
-    except Exception as e:
-        print(f"charger_licence: {e}"); return None
-
-def sauvegarder_licence(pid, data):
-    try:
-        db.collection("licences").document(pid).set(data); return True
-    except Exception as e:
-        print(f"sauvegarder_licence: {e}"); return False
+# ============================================================
+# UTILITAIRES - STOCKAGE FIREBASE
+# ============================================================
 
 def charger_licences():
     try:
-        return {d.id: d.to_dict() for d in db.collection("licences").stream()}
+        docs = db.collection("licences").stream()
+        return {doc.id: doc.to_dict() for doc in docs}
     except Exception as e:
-        print(f"charger_licences: {e}"); return {}
+        print(f"Erreur chargement licences: {e}")
+        return {}
+
+def sauvegarder_licence(project_id, licence):
+    try:
+        db.collection("licences").document(project_id).set(licence)
+        return True
+    except Exception as e:
+        print(f"Erreur sauvegarde licence: {e}")
+        return False
+
+def charger_licence(project_id):
+    try:
+        doc = db.collection("licences").document(project_id).get()
+        return doc.to_dict() if doc.exists else None
+    except Exception as e:
+        print(f"Erreur chargement licence: {e}")
+        return None
+
+def charger_codes():
+    try:
+        docs = db.collection("codes").stream()
+        return {doc.id: doc.to_dict() for doc in docs}
+    except Exception as e:
+        print(f"Erreur chargement codes: {e}")
+        return {}
+
+def sauvegarder_code(code, info):
+    try:
+        db.collection("codes").document(code).set(info)
+        return True
+    except Exception as e:
+        print(f"Erreur sauvegarde code: {e}")
+        return False
 
 def charger_code(code):
     try:
         doc = db.collection("codes").document(code).get()
         return doc.to_dict() if doc.exists else None
     except Exception as e:
-        print(f"charger_code: {e}"); return None
+        print(f"Erreur chargement code: {e}")
+        return None
 
-def sauvegarder_code(code, data):
-    try:
-        db.collection("codes").document(code).set(data); return True
-    except Exception as e:
-        print(f"sauvegarder_code: {e}"); return False
+# ============================================================
+# UTILITAIRES - CODES PWA
+# ============================================================
 
-def charger_codes():
+def sauvegarder_pwa_code(code, data):
     try:
-        return {d.id: d.to_dict() for d in db.collection("codes").stream()}
+        db.collection("pwa_codes").document(code).set(data)
+        return True
     except Exception as e:
-        print(f"charger_codes: {e}"); return {}
+        print(f"Erreur sauvegarde code PWA: {e}")
+        return False
 
 def charger_pwa_code(code):
     try:
         doc = db.collection("pwa_codes").document(code).get()
         return doc.to_dict() if doc.exists else None
     except Exception as e:
-        print(f"charger_pwa_code: {e}"); return None
-
-def sauvegarder_pwa_code(code, data):
-    try:
-        db.collection("pwa_codes").document(code).set(data); return True
-    except Exception as e:
-        print(f"sauvegarder_pwa_code: {e}"); return False
+        print(f"Erreur chargement code PWA: {e}")
+        return None
 
 def supprimer_pwa_code(code):
     try:
-        db.collection("pwa_codes").document(code).delete(); return True
+        db.collection("pwa_codes").document(code).delete()
+        return True
     except Exception as e:
-        print(f"supprimer_pwa_code: {e}"); return False
+        print(f"Erreur suppression code PWA: {e}")
+        return False
 
 def nettoyer_codes_expires():
     try:
         now = datetime.now().timestamp() * 1000
-        for doc in db.collection("pwa_codes").where("expiresAt","<",now).stream():
+        expired = db.collection("pwa_codes").where("expiresAt", "<", now).stream()
+        for doc in expired:
             doc.reference.delete()
     except Exception as e:
-        print(f"nettoyer_codes_expires: {e}")
+        print(f"Erreur nettoyage codes PWA: {e}")
 
-# ── Notifications ─────────────────────────────────────────
+# ============================================================
+# UTILITAIRES - NOTIFICATIONS
+# ============================================================
 
 def envoyer_notification(sujet, message):
     if not SMTP_PASSWORD or not SMTP_EMAIL:
-        print(f"[NOTIF] {sujet}: {message}"); return False
+        print(f"[NOTIFICATION] {sujet}: {message}")
+        return False
     try:
         msg = MIMEMultipart()
-        msg["From"] = SMTP_EMAIL; msg["To"] = NOTIFY_EMAIL
+        msg["From"] = SMTP_EMAIL
+        msg["To"] = NOTIFY_EMAIL
         msg["Subject"] = f"[ManagerPresence] {sujet}"
         msg.attach(MIMEText(message, "plain"))
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
-            s.login(SMTP_EMAIL, SMTP_PASSWORD); s.send_message(msg)
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.send_message(msg)
         return True
     except Exception as e:
-        print(f"envoyer_notification: {e}"); return False
+        print(f"Erreur envoi email: {e}")
+        return False
 
-# ── Licences ─────────────────────────────────────────────
+# ============================================================
+# UTILITAIRES - CODES D'ACTIVATION
+# ============================================================
 
 def generer_code(prefixe):
     chars = string.ascii_uppercase + string.digits
-    return f"{prefixe}-{''.join(secrets.choice(chars) for _ in range(4))}-{''.join(secrets.choice(chars) for _ in range(4))}"
+    partie1 = ''.join(secrets.choice(chars) for _ in range(4))
+    partie2 = ''.join(secrets.choice(chars) for _ in range(4))
+    return f"{prefixe}-{partie1}-{partie2}"
 
-def calculer_jours_restants(date_str):
+# ============================================================
+# UTILITAIRES - LICENCES
+# ============================================================
+
+def calculer_jours_restants(date_expiration_str):
     try:
-        d = datetime.fromisoformat(date_str.replace("Z","+00:00"))
-        if d.tzinfo: d = d.replace(tzinfo=None)
-        return max(0,(d - datetime.now()).days)
-    except: return 0
+        date_exp = datetime.fromisoformat(date_expiration_str.replace("Z", "+00:00"))
+        if date_exp.tzinfo:
+            date_exp = date_exp.replace(tzinfo=None)
+        delta = date_exp - datetime.now()
+        return max(0, delta.days)
+    except:
+        return 0
 
-def creer_licence_trial(pid, nom=""):
-    now = datetime.now(); exp = now + timedelta(days=PLANS["trial"]["duree_jours"])
-    l = {
-        "projectId": pid, "nomStructure": nom,
-        "dateInscription": now.isoformat(), "dateExpiration": exp.isoformat(),
-        "plan":"trial", "actif":True,
+def creer_licence_trial(project_id, nom_structure=""):
+    maintenant = datetime.now()
+    expiration = maintenant + timedelta(days=PLANS["trial"]["duree_jours"])
+    licence = {
+        "projectId": project_id,
+        "nomStructure": nom_structure,
+        "dateInscription": maintenant.isoformat(),
+        "dateExpiration": expiration.isoformat(),
+        "plan": "trial",
+        "actif": True,
         "fonctionnalites": PLANS["trial"]["fonctionnalites"],
         "maxCadres": PLANS["trial"]["max_cadres"],
         "maxMembres": PLANS["trial"]["max_membres"],
         "maxCreneaux": PLANS["trial"]["max_creneaux"],
-        "stripeCustomerId":None, "stripeSubscriptionId":None,
-        "message": f"Bienvenue ! Essai gratuit de {PLANS['trial']['duree_jours']} jours."
+        "stripeCustomerId": None,
+        "stripeSubscriptionId": None,
+        "message": f"Bienvenue ! Votre essai gratuit expire dans {PLANS['trial']['duree_jours']} jours."
     }
-    envoyer_notification("🆕 Nouvelle inscription",
-        f"Project ID: {pid}\nStructure: {nom or 'N/A'}\nDate: {now.strftime('%d/%m/%Y %H:%M')}\nExpiration: {exp.strftime('%d/%m/%Y')}")
-    return l
+    envoyer_notification(
+        "🆕 Nouvelle inscription",
+        f"Nouveau client inscrit !\n\nProject ID: {project_id}\nStructure: {nom_structure or 'Non renseigné'}\nDate: {maintenant.strftime('%d/%m/%Y %H:%M')}\nExpiration essai: {expiration.strftime('%d/%m/%Y')}"
+    )
+    return licence
 
-def formater_licence_response(l):
-    j = calculer_jours_restants(l.get("dateExpiration",""))
-    actif = l.get("actif",False) and j > 0
-    if not actif:
-        msg = "Licence expirée. Souscrivez un abonnement pour continuer."
-    elif j <= 7:
-        msg = f"⚠️ Expire dans {j} jour(s) !"
-    elif j <= 30 and l.get("plan") == "trial":
-        msg = f"Essai gratuit — expire dans {j} jours."
+def formater_licence_response(licence):
+    jours_restants = calculer_jours_restants(licence.get("dateExpiration", ""))
+    est_actif = licence.get("actif", False) and jours_restants > 0
+
+    if not est_actif:
+        message = "Votre licence a expiré. Souscrivez un abonnement pour continuer."
+    elif jours_restants <= 7:
+        message = f"⚠️ Votre licence expire dans {jours_restants} jour(s) !"
+    elif jours_restants <= 40 and licence.get("plan") == "trial":
+        message = f"Votre essai gratuit expire dans {jours_restants} jours."
     else:
-        msg = l.get("message","")
-    p = PLANS.get(l.get("plan","trial"), PLANS["trial"])
+        message = licence.get("message", "")
+
+    plan_info = PLANS.get(licence.get("plan", "trial"), PLANS["trial"])
+
     return {
-        "projectId": l.get("projectId"), "nomStructure": l.get("nomStructure",""),
-        "plan": l.get("plan","trial"), "planNom": p["nom"], "actif": actif,
-        "dateExpiration": l.get("dateExpiration"), "joursRestants": j,
-        "fonctionnalites": l.get("fonctionnalites", p["fonctionnalites"]),
-        "maxCadres": l.get("maxCadres", p["max_cadres"]),
-        "maxMembres": l.get("maxMembres", p.get("max_membres",9999)),
-        "maxCreneaux": l.get("maxCreneaux", p.get("max_creneaux",9999)),
-        "stripeCustomerId": l.get("stripeCustomerId"),
-        "stripeSubscriptionId": l.get("stripeSubscriptionId"),
-        "message": msg
+        "projectId": licence.get("projectId"),
+        "nomStructure": licence.get("nomStructure", ""),
+        "plan": licence.get("plan", "trial"),
+        "planNom": plan_info["nom"],
+        "actif": est_actif,
+        "dateExpiration": licence.get("dateExpiration"),
+        "joursRestants": jours_restants,
+        "fonctionnalites": licence.get("fonctionnalites", plan_info["fonctionnalites"]),
+        "maxCadres": licence.get("maxCadres", plan_info["max_cadres"]),
+        "maxMembres": licence.get("maxMembres", plan_info.get("max_membres", 9999)),
+        "maxCreneaux": licence.get("maxCreneaux", plan_info.get("max_creneaux", 9999)),
+        "stripeCustomerId": licence.get("stripeCustomerId"),
+        "stripeSubscriptionId": licence.get("stripeSubscriptionId"),
+        "message": message
     }
 
-def verifier_admin():
-    return request.headers.get("Authorization","").replace("Bearer ","") == ADMIN_TOKEN
+# ============================================================
+# ROUTES PUBLIQUES
+# ============================================================
 
-# ── Routes publiques ──────────────────────────────────────
-
-@app.route("/", methods=["GET","HEAD"])
+@app.route("/", methods=["GET", "HEAD"])
 def index():
-    return jsonify({"service":"ManagerPresence License Server","status":"ok","version":"2.0.0","timestamp":datetime.now().isoformat()})
+    """Route racine pour UptimeRobot"""
+    return jsonify({
+        "service": "ManagerPresence License Server",
+        "status": "ok",
+        "version": "2.0.0",
+        "timestamp": datetime.now().isoformat()
+    })
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status":"ok","timestamp":datetime.now().isoformat()})
+    return jsonify({"status": "ok", "timestamp": datetime.now().isoformat()})
 
-@app.route("/licence/<pid>", methods=["GET"])
-def get_licence(pid):
-    l = charger_licence(pid)
-    if l is None:
-        l = creer_licence_trial(pid, request.args.get("nom",""))
-        sauvegarder_licence(pid, l)
-    return jsonify(formater_licence_response(l))
+@app.route("/licence/<project_id>", methods=["GET"])
+def get_licence(project_id):
+    """Récupère la licence (crée un trial si inconnu)"""
+    licence = charger_licence(project_id)
+    if licence is None:
+        nom_structure = request.args.get("nom", "")
+        licence = creer_licence_trial(project_id, nom_structure)
+        sauvegarder_licence(project_id, licence)
+    return jsonify(formater_licence_response(licence))
 
-@app.route("/licence/<pid>/code", methods=["POST"])
-def activer_code(pid):
+@app.route("/licence/<project_id>/code", methods=["POST"])
+def activer_code(project_id):
+    """Active un code pour un projet"""
     data = request.get_json() or {}
-    code = data.get("code","").strip().upper()
-    if not code: return jsonify({"error":"Code manquant"}), 400
-    ci = charger_code(code)
-    if ci is None: return jsonify({"error":"Code invalide"}), 404
-    if ci.get("utilise"): return jsonify({"error":"Code déjà utilisé"}), 400
-    l = charger_licence(pid) or creer_licence_trial(pid)
-    tc = CODE_TYPES.get(ci.get("type"),{})
-    if tc.get("plan"):
-        pc = PLANS[tc["plan"]]
-        l.update({"plan":tc["plan"],"fonctionnalites":pc["fonctionnalites"],"maxCadres":pc["max_cadres"],
-                  "maxMembres":pc.get("max_membres",9999),"maxCreneaux":pc.get("max_creneaux",9999),
-                  "dateExpiration":(datetime.now()+timedelta(days=tc["jours"])).isoformat()})
+    code = data.get("code", "").strip().upper()
+
+    if not code:
+        return jsonify({"error": "Code manquant"}), 400
+
+    code_info = charger_code(code)
+    if code_info is None:
+        return jsonify({"error": "Code invalide"}), 404
+    if code_info.get("utilise"):
+        return jsonify({"error": "Code déjà utilisé"}), 400
+
+    licence = charger_licence(project_id)
+    if licence is None:
+        licence = creer_licence_trial(project_id)
+
+    code_type = code_info.get("type")
+    type_config = CODE_TYPES.get(code_type, {})
+
+    if type_config.get("plan"):
+        nouveau_plan = type_config["plan"]
+        plan_config = PLANS[nouveau_plan]
+        licence["plan"] = nouveau_plan
+        licence["fonctionnalites"] = plan_config["fonctionnalites"]
+        licence["maxCadres"] = plan_config["max_cadres"]
+        licence["maxMembres"] = plan_config.get("max_membres", 9999)
+        licence["maxCreneaux"] = plan_config.get("max_creneaux", 9999)
+        licence["dateExpiration"] = (datetime.now() + timedelta(days=type_config["jours"])).isoformat()
     else:
         try:
-            d = datetime.fromisoformat(l["dateExpiration"].replace("Z","+00:00"))
-            if d.tzinfo: d = d.replace(tzinfo=None)
-        except: d = datetime.now()
-        if d < datetime.now(): d = datetime.now()
-        l["dateExpiration"] = (d + timedelta(days=tc["jours"])).isoformat()
-    l["actif"] = True; l["message"] = f"Code {code} activé !"
-    ci.update({"utilise":True,"utilise_par":pid,"utilise_le":datetime.now().isoformat()})
-    sauvegarder_licence(pid, l); sauvegarder_code(code, ci)
-    envoyer_notification("🎟️ Code activé", f"Code: {code}\nType: {ci.get('type')}\nProject: {pid}")
-    return jsonify({"success":True,"message":f"Plan : {PLANS[l['plan']]['nom']}.","licence":formater_licence_response(l)})
+            date_exp_actuelle = datetime.fromisoformat(licence["dateExpiration"].replace("Z", "+00:00"))
+            if date_exp_actuelle.tzinfo:
+                date_exp_actuelle = date_exp_actuelle.replace(tzinfo=None)
+        except:
+            date_exp_actuelle = datetime.now()
+        if date_exp_actuelle < datetime.now():
+            date_exp_actuelle = datetime.now()
+        licence["dateExpiration"] = (date_exp_actuelle + timedelta(days=type_config["jours"])).isoformat()
 
-# ── Routes Stripe ─────────────────────────────────────────
+    licence["actif"] = True
+    licence["message"] = f"Code {code} activé avec succès !"
+
+    code_info["utilise"] = True
+    code_info["utilise_par"] = project_id
+    code_info["utilise_le"] = datetime.now().isoformat()
+
+    sauvegarder_licence(project_id, licence)
+    sauvegarder_code(code, code_info)
+
+    envoyer_notification(
+        "🎟️ Code activé",
+        f"Un code a été activé !\n\nCode: {code}\nType: {code_type}\nProject ID: {project_id}\nStructure: {licence.get('nomStructure', 'N/A')}"
+    )
+
+    return jsonify({
+        "success": True,
+        "message": f"Code activé ! Vous êtes maintenant en plan {PLANS[licence['plan']]['nom']}.",
+        "licence": formater_licence_response(licence)
+    })
+
+# ============================================================
+# ROUTES STRIPE - PAIEMENT
+# ============================================================
 
 @app.route("/stripe/prices", methods=["GET"])
 def stripe_prices():
+    """Retourne les prix disponibles pour la PWA"""
     return jsonify({
-        "standard":{"monthly":{"id":STRIPE_PRICES["standard_monthly"],"price":4.90,"currency":"eur"},
-                    "yearly": {"id":STRIPE_PRICES["standard_yearly"], "price":49.90,"currency":"eur"}},
-        "premium": {"monthly":{"id":STRIPE_PRICES["premium_monthly"], "price":9.99,"currency":"eur"},
-                    "yearly": {"id":STRIPE_PRICES["premium_yearly"],  "price":99.99,"currency":"eur"}},
+        "standard": {
+            "monthly": {"id": STRIPE_PRICES["standard_monthly"], "price": 4.90, "currency": "eur"},
+            "yearly":  {"id": STRIPE_PRICES["standard_yearly"],  "price": 49.90, "currency": "eur"}
+        },
+        "premium": {
+            "monthly": {"id": STRIPE_PRICES["premium_monthly"], "price": 9.99, "currency": "eur"},
+            "yearly":  {"id": STRIPE_PRICES["premium_yearly"],  "price": 99.99, "currency": "eur"}
+        },
         "publicKey": STRIPE_PUBLIC_KEY
     })
 
 @app.route("/stripe/checkout", methods=["POST"])
 def stripe_checkout():
+    """
+    Crée une session Stripe Checkout.
+
+    Body JSON:
+    {
+        "projectId": "presence-en-cours",
+        "priceId": "price_xxx",
+        "email": "client@example.com",
+        "nomStructure": "École Vilpy"
+    }
+    """
     data = request.get_json() or {}
-    pid      = data.get("projectId","").strip()
-    price_id = data.get("priceId","").strip()
-    email    = data.get("email","").strip()
-    nom      = data.get("nomStructure","").strip()
-    if not pid or not price_id: return jsonify({"error":"projectId et priceId requis"}), 400
-    if price_id not in STRIPE_PRICES.values(): return jsonify({"error":"Prix invalide"}), 400
-    l = charger_licence(pid)
-    if l is None:
-        l = creer_licence_trial(pid, nom); sauvegarder_licence(pid, l)
+    project_id   = data.get("projectId", "").strip()
+    price_id     = data.get("priceId", "").strip()
+    email        = data.get("email", "").strip()
+    nom_structure = data.get("nomStructure", "").strip()
+
+    if not project_id or not price_id:
+        return jsonify({"error": "projectId et priceId requis"}), 400
+
+    valid_prices = list(STRIPE_PRICES.values())
+    if price_id not in valid_prices:
+        return jsonify({"error": "Prix invalide"}), 400
+
+    licence = charger_licence(project_id)
+    if licence is None:
+        licence = creer_licence_trial(project_id, nom_structure)
+        sauvegarder_licence(project_id, licence)
+
     try:
-        cid = l.get("stripeCustomerId")
-        if not cid:
-            c = stripe.Customer.create(email=email or None, metadata={"projectId":pid,"nomStructure":nom or l.get("nomStructure","")})
-            cid = c.id; l["stripeCustomerId"] = cid; sauvegarder_licence(pid, l)
-        session = stripe.checkout.Session.create(
-            customer=cid, payment_method_types=["card"],
-            line_items=[{"price":price_id,"quantity":1}], mode="subscription",
+        customer_id = licence.get("stripeCustomerId")
+
+        if not customer_id:
+            customer = stripe.Customer.create(
+                email=email or None,
+                metadata={
+                    "projectId": project_id,
+                    "nomStructure": nom_structure or licence.get("nomStructure", "")
+                }
+            )
+            customer_id = customer.id
+            licence["stripeCustomerId"] = customer_id
+            sauvegarder_licence(project_id, licence)
+
+        checkout_session = stripe.checkout.Session.create(
+            customer=customer_id,
+            payment_method_types=["card"],
+            line_items=[{"price": price_id, "quantity": 1}],
+            mode="subscription",
             success_url=f"{PWA_SUCCESS_URL}?session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=PWA_CANCEL_URL,
-            metadata={"projectId":pid},
-            subscription_data={"metadata":{"projectId":pid}},
+            metadata={"projectId": project_id},
+            subscription_data={"metadata": {"projectId": project_id}},
             allow_promotion_codes=True
         )
-        return jsonify({"success":True,"sessionId":session.id,"url":session.url})
+
+        return jsonify({
+            "success": True,
+            "sessionId": checkout_session.id,
+            "url": checkout_session.url
+        })
+
     except stripe.error.StripeError as e:
-        print(f"Stripe checkout: {e}"); return jsonify({"error":str(e)}), 500
+        print(f"Erreur Stripe: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/stripe/portal", methods=["POST"])
 def stripe_portal():
+    """
+    Crée une session vers le portail client Stripe.
+
+    Body JSON:
+    {
+        "projectId": "presence-en-cours"
+    }
+    """
     data = request.get_json() or {}
-    pid  = data.get("projectId","").strip()
-    if not pid: return jsonify({"error":"projectId requis"}), 400
-    l = charger_licence(pid)
-    if not l: return jsonify({"error":"Licence non trouvée"}), 404
-    cid = l.get("stripeCustomerId")
-    if not cid: return jsonify({"error":"Aucun abonnement Stripe associé"}), 400
+    project_id = data.get("projectId", "").strip()
+
+    if not project_id:
+        return jsonify({"error": "projectId requis"}), 400
+
+    licence = charger_licence(project_id)
+    if not licence:
+        return jsonify({"error": "Licence non trouvée"}), 404
+
+    customer_id = licence.get("stripeCustomerId")
+    if not customer_id:
+        return jsonify({"error": "Aucun abonnement Stripe associé"}), 400
+
     try:
-        ps = stripe.billing_portal.Session.create(customer=cid, return_url=PWA_CANCEL_URL)
-        return jsonify({"success":True,"url":ps.url})
+        portal_session = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=PWA_CANCEL_URL
+        )
+        return jsonify({"success": True, "url": portal_session.url})
+
     except stripe.error.StripeError as e:
-        print(f"Stripe portal: {e}"); return jsonify({"error":str(e)}), 500
+        print(f"Erreur Stripe Portal: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/stripe/webhook", methods=["POST"])
 def stripe_webhook():
-    payload = request.get_data(as_text=True)
-    sig     = request.headers.get("Stripe-Signature","")
+    """
+    Webhook Stripe.
+    URL à configurer dans Stripe Dashboard:
+    https://managerpresence-server.onrender.com/stripe/webhook
+    """
+    payload    = request.get_data(as_text=True)
+    sig_header = request.headers.get("Stripe-Signature", "")
+
     if STRIPE_WEBHOOK_SECRET:
         try:
-            event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
-        except (ValueError, stripe.error.SignatureVerificationError) as e:
-            return jsonify({"error":str(e)}), 400
+            event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+        except ValueError:
+            return jsonify({"error": "Invalid payload"}), 400
+        except stripe.error.SignatureVerificationError:
+            return jsonify({"error": "Invalid signature"}), 400
     else:
         event = json.loads(payload)
-    et  = event.get("type","")
-    obj = event.get("data",{}).get("object",{})
-    print(f"[STRIPE] {et}")
 
-    if et == "checkout.session.completed":
-        pid = obj.get("metadata",{}).get("projectId")
-        if pid and obj.get("subscription"):
-            _sub_created(pid, obj["subscription"], obj.get("customer"))
+    event_type  = event.get("type", "")
+    data_object = event.get("data", {}).get("object", {})
 
-    elif et == "customer.subscription.created":
-        pid = obj.get("metadata",{}).get("projectId")
-        if pid: _sub_created(pid, obj.get("id"), obj.get("customer"))
+    print(f"[STRIPE WEBHOOK] Événement: {event_type}")
 
-    elif et == "customer.subscription.updated":
-        pid = obj.get("metadata",{}).get("projectId")
-        if pid: _sub_updated(pid, obj)
+    if event_type == "checkout.session.completed":
+        session         = data_object
+        project_id      = session.get("metadata", {}).get("projectId")
+        subscription_id = session.get("subscription")
+        customer_id     = session.get("customer")
+        if project_id and subscription_id:
+            handle_subscription_created(project_id, subscription_id, customer_id)
 
-    elif et == "customer.subscription.deleted":
-        pid = obj.get("metadata",{}).get("projectId")
-        if pid: _sub_cancelled(pid)
+    elif event_type == "customer.subscription.created":
+        subscription    = data_object
+        project_id      = subscription.get("metadata", {}).get("projectId")
+        subscription_id = subscription.get("id")
+        customer_id     = subscription.get("customer")
+        if project_id:
+            handle_subscription_created(project_id, subscription_id, customer_id)
 
-    elif et == "invoice.payment_succeeded":
-        sid = obj.get("subscription")
-        if sid:
+    elif event_type == "customer.subscription.updated":
+        subscription = data_object
+        project_id   = subscription.get("metadata", {}).get("projectId")
+        if project_id:
+            handle_subscription_updated(project_id, subscription)
+
+    elif event_type == "customer.subscription.deleted":
+        subscription = data_object
+        project_id   = subscription.get("metadata", {}).get("projectId")
+        if project_id:
+            handle_subscription_cancelled(project_id)
+
+    elif event_type == "invoice.payment_succeeded":
+        invoice         = data_object
+        subscription_id = invoice.get("subscription")
+        if subscription_id:
             try:
-                sub = stripe.Subscription.retrieve(sid)
-                pid = sub.get("metadata",{}).get("projectId")
-                if pid: _payment_ok(pid, sub)
-            except Exception as e: print(f"invoice ok: {e}")
+                subscription = stripe.Subscription.retrieve(subscription_id)
+                project_id   = subscription.get("metadata", {}).get("projectId")
+                if project_id:
+                    handle_payment_succeeded(project_id, subscription)
+            except Exception as e:
+                print(f"Erreur récupération subscription: {e}")
 
-    elif et == "invoice.payment_failed":
-        sid   = obj.get("subscription")
-        email = obj.get("customer_email","")
-        if sid:
+    elif event_type == "invoice.payment_failed":
+        invoice         = data_object
+        subscription_id = invoice.get("subscription")
+        customer_email  = invoice.get("customer_email", "")
+        if subscription_id:
             try:
-                sub = stripe.Subscription.retrieve(sid)
-                pid = sub.get("metadata",{}).get("projectId")
-                if pid: _payment_fail(pid, email)
-            except Exception as e: print(f"invoice fail: {e}")
+                subscription = stripe.Subscription.retrieve(subscription_id)
+                project_id   = subscription.get("metadata", {}).get("projectId")
+                if project_id:
+                    handle_payment_failed(project_id, customer_email)
+            except Exception as e:
+                print(f"Erreur récupération subscription: {e}")
 
-    return jsonify({"received":True})
+    return jsonify({"received": True})
 
-def _sub_created(pid, sid, cid):
+# ---- Handlers Stripe ----
+
+def handle_subscription_created(project_id, subscription_id, customer_id):
+    print(f"[STRIPE] Nouvel abonnement pour {project_id}: {subscription_id}")
     try:
-        sub      = stripe.Subscription.retrieve(sid)
-        price_id = sub["items"]["data"][0]["price"]["id"]
-        interval = sub["items"]["data"][0]["price"]["recurring"]["interval"]
-        plan     = "premium" if price_id in [STRIPE_PRICES["premium_monthly"],STRIPE_PRICES["premium_yearly"]] else "standard"
-        jours    = 365 if interval == "year" else 31
-        l = charger_licence(pid)
-        if l:
-            pc = PLANS[plan]
-            l.update({"plan":plan,"fonctionnalites":pc["fonctionnalites"],"maxCadres":pc["max_cadres"],
-                      "maxMembres":pc.get("max_membres",9999),"maxCreneaux":pc.get("max_creneaux",9999),
-                      "dateExpiration":(datetime.now()+timedelta(days=jours)).isoformat(),
-                      "actif":True,"stripeCustomerId":cid,"stripeSubscriptionId":sid,
-                      "message":f"Merci ! Abonnement {pc['nom']} actif."})
-            sauvegarder_licence(pid, l)
-            envoyer_notification("💳 Nouvel abonnement", f"Project: {pid}\nPlan: {plan}\nSub: {sid}")
-    except Exception as e: print(f"_sub_created: {e}")
+        subscription = stripe.Subscription.retrieve(subscription_id)
+        price_id     = subscription["items"]["data"][0]["price"]["id"]
 
-def _sub_updated(pid, sub):
+        if price_id in [STRIPE_PRICES["premium_monthly"], STRIPE_PRICES["premium_yearly"]]:
+            nouveau_plan = "premium"
+        else:
+            nouveau_plan = "standard"
+
+        interval = subscription["items"]["data"][0]["price"]["recurring"]["interval"]
+        jours = 365 if interval == "year" else 31
+
+        licence = charger_licence(project_id)
+        if licence:
+            plan_config = PLANS[nouveau_plan]
+            licence["plan"]               = nouveau_plan
+            licence["fonctionnalites"]    = plan_config["fonctionnalites"]
+            licence["maxCadres"]          = plan_config["max_cadres"]
+            licence["maxMembres"]         = plan_config.get("max_membres", 9999)
+            licence["maxCreneaux"]        = plan_config.get("max_creneaux", 9999)
+            licence["dateExpiration"]     = (datetime.now() + timedelta(days=jours)).isoformat()
+            licence["actif"]              = True
+            licence["stripeCustomerId"]   = customer_id
+            licence["stripeSubscriptionId"] = subscription_id
+            licence["message"]            = f"Merci ! Votre abonnement {plan_config['nom']} est actif."
+            sauvegarder_licence(project_id, licence)
+            envoyer_notification(
+                "💳 Nouvel abonnement Stripe",
+                f"Nouvel abonnement !\n\nProject ID: {project_id}\nStructure: {licence.get('nomStructure', 'N/A')}\nPlan: {nouveau_plan}\nSubscription: {subscription_id}"
+            )
+    except Exception as e:
+        print(f"Erreur handle_subscription_created: {e}")
+
+def handle_subscription_updated(project_id, subscription):
+    print(f"[STRIPE] Abonnement mis à jour pour {project_id}")
     try:
-        price_id = sub["items"]["data"][0]["price"]["id"]
-        status   = sub.get("status")
-        plan     = "premium" if price_id in [STRIPE_PRICES["premium_monthly"],STRIPE_PRICES["premium_yearly"]] else "standard"
-        l = charger_licence(pid)
-        if l:
+        price_id = subscription["items"]["data"][0]["price"]["id"]
+        status   = subscription.get("status")
+
+        nouveau_plan = "premium" if price_id in [STRIPE_PRICES["premium_monthly"], STRIPE_PRICES["premium_yearly"]] else "standard"
+
+        licence = charger_licence(project_id)
+        if licence:
             if status == "active":
-                pc = PLANS[plan]
-                l.update({"plan":plan,"fonctionnalites":pc["fonctionnalites"],"maxCadres":pc["max_cadres"],
-                          "maxMembres":pc.get("max_membres",9999),"maxCreneaux":pc.get("max_creneaux",9999),"actif":True})
-                pe = sub.get("current_period_end")
-                if pe: l["dateExpiration"] = datetime.fromtimestamp(pe).isoformat()
-            elif status in ["past_due","unpaid"]:
-                l["message"] = "⚠️ Problème de paiement — Mettez à jour votre carte."
+                plan_config = PLANS[nouveau_plan]
+                licence["plan"]            = nouveau_plan
+                licence["fonctionnalites"] = plan_config["fonctionnalites"]
+                licence["maxCadres"]       = plan_config["max_cadres"]
+                licence["maxMembres"]      = plan_config.get("max_membres", 9999)
+                licence["maxCreneaux"]     = plan_config.get("max_creneaux", 9999)
+                licence["actif"]           = True
+                period_end = subscription.get("current_period_end")
+                if period_end:
+                    licence["dateExpiration"] = datetime.fromtimestamp(period_end).isoformat()
+            elif status in ["past_due", "unpaid"]:
+                licence["message"] = "⚠️ Problème de paiement - Mettez à jour votre carte."
             elif status == "canceled":
-                l["message"] = "Abonnement annulé. Actif jusqu'à la fin de la période."
-            sauvegarder_licence(pid, l)
-    except Exception as e: print(f"_sub_updated: {e}")
+                licence["message"] = "Abonnement annulé. Il reste actif jusqu'à la fin de la période."
+            sauvegarder_licence(project_id, licence)
+    except Exception as e:
+        print(f"Erreur handle_subscription_updated: {e}")
 
-def _sub_cancelled(pid):
-    l = charger_licence(pid)
-    if l:
-        l.update({"stripeSubscriptionId":None,"message":f"Abonnement annulé. Actif jusqu'au {l.get('dateExpiration','')[:10]}."})
-        sauvegarder_licence(pid, l)
-        envoyer_notification("❌ Abonnement annulé", f"Project: {pid}\nStructure: {l.get('nomStructure','N/A')}")
+def handle_subscription_cancelled(project_id):
+    print(f"[STRIPE] Abonnement annulé pour {project_id}")
+    licence = charger_licence(project_id)
+    if licence:
+        licence["stripeSubscriptionId"] = None
+        licence["message"] = "Votre abonnement a été annulé. Accès jusqu'au " + licence.get("dateExpiration", "")[:10]
+        sauvegarder_licence(project_id, licence)
+        envoyer_notification(
+            "❌ Abonnement annulé",
+            f"Abonnement annulé !\n\nProject ID: {project_id}\nStructure: {licence.get('nomStructure', 'N/A')}"
+        )
 
-def _payment_ok(pid, sub):
-    l = charger_licence(pid)
-    if l:
-        pe = sub.get("current_period_end")
-        if pe: l["dateExpiration"] = datetime.fromtimestamp(pe).isoformat()
-        l.update({"actif":True,"message":"Abonnement renouvelé — merci !"})
-        sauvegarder_licence(pid, l)
+def handle_payment_succeeded(project_id, subscription):
+    print(f"[STRIPE] Paiement réussi pour {project_id}")
+    licence = charger_licence(project_id)
+    if licence:
+        period_end = subscription.get("current_period_end")
+        if period_end:
+            licence["dateExpiration"] = datetime.fromtimestamp(period_end).isoformat()
+        licence["actif"]   = True
+        licence["message"] = "Merci ! Votre abonnement a été renouvelé."
+        sauvegarder_licence(project_id, licence)
 
-def _payment_fail(pid, email):
-    l = charger_licence(pid)
-    if l:
-        l["message"] = "⚠️ Échec du paiement. Mettez à jour votre carte via le portail client."
-        sauvegarder_licence(pid, l)
-        envoyer_notification("⚠️ Paiement échoué", f"Project: {pid}\nEmail: {email}")
+def handle_payment_failed(project_id, customer_email):
+    print(f"[STRIPE] Paiement échoué pour {project_id}")
+    licence = charger_licence(project_id)
+    if licence:
+        licence["message"] = "⚠️ Échec du paiement. Mettez à jour votre carte via le portail client."
+        sauvegarder_licence(project_id, licence)
+        envoyer_notification(
+            "⚠️ Paiement échoué",
+            f"Échec de paiement !\n\nProject ID: {project_id}\nStructure: {licence.get('nomStructure', 'N/A')}\nEmail: {customer_email}"
+        )
 
-# ── Routes PWA ────────────────────────────────────────────
+# ============================================================
+# ROUTES PWA - Accès sécurisé temporaire
+# ============================================================
 
 @app.route("/pwa/generate", methods=["POST"])
 def pwa_generate():
+    """
+    Génère et stocke un code PWA temporaire.
+    Appelé par l'app Android quand un admin génère un code.
+
+    Body JSON:
+    {
+        "projectId": "presence-en-cours",
+        "code": "PRES-AB12",
+        "generatedBy": "Jean",
+        "clubName": "École Vilpy",
+        "firebaseConfig": { ... }
+    }
+    """
     data = request.get_json() or {}
-    for f in ["projectId","code","firebaseConfig"]:
-        if not data.get(f): return jsonify({"error":f"Champ manquant: {f}"}), 400
-    pid  = data["projectId"]; code = data["code"].upper()
-    l    = charger_licence(pid)
-    if l:
-        if l.get("plan") == "standard": return jsonify({"error":"PWA nécessite Trial ou Premium"}), 403
-        if calculer_jours_restants(l.get("dateExpiration","")) <= 0: return jsonify({"error":"Licence expirée"}), 403
-    now = datetime.now(); exp = now + timedelta(seconds=PWA_CODE_VALIDITY)
-    exp_ms = int(exp.timestamp()*1000)
-    pwa = {"projectId":pid,"code":code,"generatedBy":data.get("generatedBy","Admin"),
-           "clubName":data.get("clubName",""),"firebaseConfig":data["firebaseConfig"],
-           "createdAt":now.isoformat(),"expiresAt":exp_ms,"used":False}
-    if not sauvegarder_pwa_code(code, pwa): return jsonify({"error":"Erreur sauvegarde"}), 500
+
+    for field in ["projectId", "code", "firebaseConfig"]:
+        if not data.get(field):
+            return jsonify({"error": f"Champ manquant: {field}"}), 400
+
+    project_id    = data["projectId"]
+    code          = data["code"].upper()
+    generated_by  = data.get("generatedBy", "Admin")
+    club_name     = data.get("clubName", "")
+    firebase_config = data["firebaseConfig"]
+
+    licence = charger_licence(project_id)
+    if licence:
+        if licence.get("plan") == "standard":
+            return jsonify({"error": "L'accès PWA nécessite une licence Trial ou Premium"}), 403
+        if calculer_jours_restants(licence.get("dateExpiration", "")) <= 0:
+            return jsonify({"error": "Licence expirée"}), 403
+
+    now        = datetime.now()
+    expires_at = now + timedelta(seconds=PWA_CODE_VALIDITY)
+    expires_at_ms = int(expires_at.timestamp() * 1000)
+
+    pwa_data = {
+        "projectId":     project_id,
+        "code":          code,
+        "generatedBy":   generated_by,
+        "clubName":      club_name,
+        "firebaseConfig":firebase_config,
+        "createdAt":     now.isoformat(),
+        "expiresAt":     expires_at_ms,
+        "used":          False
+    }
+
+    if not sauvegarder_pwa_code(code, pwa_data):
+        return jsonify({"error": "Erreur serveur lors de la sauvegarde"}), 500
+
     nettoyer_codes_expires()
-    return jsonify({"success":True,"code":code,"expiresAt":exp_ms,"validitySeconds":PWA_CODE_VALIDITY}), 201
+
+    return jsonify({
+        "success": True,
+        "code": code,
+        "expiresAt": expires_at_ms,
+        "validitySeconds": PWA_CODE_VALIDITY
+    }), 201
 
 @app.route("/pwa/verify", methods=["POST"])
 def pwa_verify():
+    """
+    Vérifie un code PWA et retourne la config Firebase si valide.
+
+    Body JSON:
+    { "code": "PRES-AB12" }
+    """
     data = request.get_json() or {}
-    code = data.get("code","").strip().upper()
-    if not code: return jsonify({"error":"Code manquant"}), 400
-    pwa = charger_pwa_code(code)
-    if pwa is None: return jsonify({"error":"Code invalide ou expiré"}), 404
-    now_ms = int(datetime.now().timestamp()*1000)
-    if now_ms > pwa.get("expiresAt",0):
-        supprimer_pwa_code(code); return jsonify({"error":"Code expiré"}), 410
-    if pwa.get("used"): return jsonify({"error":"Code déjà utilisé"}), 400
-    pwa.update({"used":True,"usedAt":datetime.now().isoformat()})
-    sauvegarder_pwa_code(code, pwa)
-    pid = pwa.get("projectId","")
-    l   = charger_licence(pid)
-    return jsonify({"success":True,"projectId":pid,"clubName":pwa.get("clubName",""),
-                    "firebaseConfig":pwa.get("firebaseConfig",{}),"generatedBy":pwa.get("generatedBy",""),
-                    "licence":formater_licence_response(l) if l else None})
+    code = data.get("code", "").strip().upper()
+
+    if not code:
+        return jsonify({"error": "Code manquant"}), 400
+
+    pwa_data = charger_pwa_code(code)
+    if pwa_data is None:
+        return jsonify({"error": "Code invalide ou expiré"}), 404
+
+    now_ms     = int(datetime.now().timestamp() * 1000)
+    expires_at = pwa_data.get("expiresAt", 0)
+
+    if now_ms > expires_at:
+        supprimer_pwa_code(code)
+        return jsonify({"error": "Code expiré"}), 410
+
+    if pwa_data.get("used", False):
+        return jsonify({"error": "Code déjà utilisé"}), 400
+
+    pwa_data["used"]   = True
+    pwa_data["usedAt"] = datetime.now().isoformat()
+    sauvegarder_pwa_code(code, pwa_data)
+
+    project_id   = pwa_data.get("projectId", "")
+    licence      = charger_licence(project_id)
+    licence_info = formater_licence_response(licence) if licence else None
+
+    return jsonify({
+        "success":       True,
+        "projectId":     project_id,
+        "clubName":      pwa_data.get("clubName", ""),
+        "firebaseConfig":pwa_data.get("firebaseConfig", {}),
+        "generatedBy":   pwa_data.get("generatedBy", ""),
+        "licence":       licence_info
+    })
 
 @app.route("/pwa/status/<code>", methods=["GET"])
 def pwa_status(code):
-    code = code.upper(); pwa = charger_pwa_code(code)
-    if pwa is None: return jsonify({"exists":False,"status":"not_found"})
-    now_ms = int(datetime.now().timestamp()*1000); exp = pwa.get("expiresAt",0)
-    if now_ms > exp: return jsonify({"exists":True,"status":"expired"})
-    if pwa.get("used"): return jsonify({"exists":True,"status":"used","usedAt":pwa.get("usedAt","")})
-    return jsonify({"exists":True,"status":"active","remainingSeconds":int((exp-now_ms)/1000)})
+    """
+    Vérifie le statut d'un code PWA (pour l'app Android).
+    Permet de savoir si le code a été utilisé.
+    """
+    code     = code.upper()
+    pwa_data = charger_pwa_code(code)
 
-# ── Routes Admin ──────────────────────────────────────────
+    if pwa_data is None:
+        return jsonify({"exists": False, "status": "not_found"})
+
+    now_ms     = int(datetime.now().timestamp() * 1000)
+    expires_at = pwa_data.get("expiresAt", 0)
+
+    if now_ms > expires_at:
+        return jsonify({"exists": True, "status": "expired"})
+
+    if pwa_data.get("used", False):
+        return jsonify({
+            "exists": True,
+            "status": "used",
+            "usedAt": pwa_data.get("usedAt", "")
+        })
+
+    remaining_seconds = int((expires_at - now_ms) / 1000)
+    return jsonify({
+        "exists":           True,
+        "status":           "active",
+        "remainingSeconds": remaining_seconds
+    })
+
+# ============================================================
+# ROUTES ADMIN (protégées par token)
+# ============================================================
+
+def verifier_admin():
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    return token == ADMIN_TOKEN
 
 @app.route("/admin/liste", methods=["GET"])
 def admin_liste():
-    if not verifier_admin(): return jsonify({"error":"Non autorisé"}), 401
-    liste = sorted([formater_licence_response(l) for l in charger_licences().values()],
-                   key=lambda x: x.get("dateExpiration",""), reverse=True)
-    return jsonify({"total":len(liste),"licences":liste})
+    """Liste toutes les licences"""
+    if not verifier_admin():
+        return jsonify({"error": "Non autorisé"}), 401
+    licences = charger_licences()
+    liste = [formater_licence_response(l) for l in licences.values()]
+    liste.sort(key=lambda x: x.get("dateExpiration", ""), reverse=True)
+    return jsonify({"total": len(liste), "licences": liste})
 
 @app.route("/admin/gencode", methods=["POST"])
 def admin_gencode():
-    if not verifier_admin(): return jsonify({"error":"Non autorisé"}), 401
-    data = request.get_json() or {}
-    ct   = data.get("type","").upper()
-    if ct not in CODE_TYPES: return jsonify({"error":f"Types valides: {list(CODE_TYPES.keys())}"}), 400
-    conf = CODE_TYPES[ct]; codes = charger_codes()
-    nc   = generer_code(conf["prefixe"])
-    while nc in codes: nc = generer_code(conf["prefixe"])
-    sauvegarder_code(nc, {"type":ct,"cree_le":datetime.now().isoformat(),"utilise":False})
-    return jsonify({"code":nc,"type":ct,"effet":f"{conf.get('plan','Prolongation')} — {conf['jours']} jours"})
+    """Génère un nouveau code d'activation"""
+    if not verifier_admin():
+        return jsonify({"error": "Non autorisé"}), 401
+
+    data      = request.get_json() or {}
+    code_type = data.get("type", "").upper()
+
+    if code_type not in CODE_TYPES:
+        return jsonify({"error": f"Type invalide. Types: {list(CODE_TYPES.keys())}"}), 400
+
+    config = CODE_TYPES[code_type]
+    codes  = charger_codes()
+
+    nouveau_code = generer_code(config["prefixe"])
+    while nouveau_code in codes:
+        nouveau_code = generer_code(config["prefixe"])
+
+    code_info = {
+        "type":    code_type,
+        "cree_le": datetime.now().isoformat(),
+        "utilise": False
+    }
+    sauvegarder_code(nouveau_code, code_info)
+
+    return jsonify({
+        "code":  nouveau_code,
+        "type":  code_type,
+        "effet": f"{config.get('plan', 'Prolongation')} - {config['jours']} jours"
+    })
 
 @app.route("/admin/codes", methods=["GET"])
 def admin_codes():
-    if not verifier_admin(): return jsonify({"error":"Non autorisé"}), 401
+    """Liste tous les codes"""
+    if not verifier_admin():
+        return jsonify({"error": "Non autorisé"}), 401
     codes = charger_codes()
-    liste = sorted([{"code":c,**i} for c,i in codes.items()], key=lambda x: x.get("cree_le",""), reverse=True)
-    return jsonify({"total":len(liste),"codes":liste})
+    liste = [{"code": c, **info} for c, info in codes.items()]
+    liste.sort(key=lambda x: x.get("cree_le", ""), reverse=True)
+    return jsonify({"total": len(liste), "codes": liste})
 
 @app.route("/admin/pwa-codes", methods=["GET"])
 def admin_pwa_codes():
-    if not verifier_admin(): return jsonify({"error":"Non autorisé"}), 401
+    """Liste tous les codes PWA (admin)"""
+    if not verifier_admin():
+        return jsonify({"error": "Non autorisé"}), 401
     try:
-        now_ms = int(datetime.now().timestamp()*1000); codes = []
-        for doc in db.collection("pwa_codes").stream():
-            d = doc.to_dict(); exp = d.get("expiresAt",0)
-            status = "expired" if now_ms > exp else ("used" if d.get("used") else "active")
-            codes.append({"code":doc.id,"projectId":d.get("projectId",""),"clubName":d.get("clubName",""),
-                          "generatedBy":d.get("generatedBy",""),"createdAt":d.get("createdAt",""),"status":status})
-        codes.sort(key=lambda x: x.get("createdAt",""), reverse=True)
-        return jsonify({"total":len(codes),"codes":codes})
-    except Exception as e: return jsonify({"error":str(e)}), 500
+        docs   = db.collection("pwa_codes").stream()
+        codes  = []
+        now_ms = int(datetime.now().timestamp() * 1000)
+        for doc in docs:
+            data       = doc.to_dict()
+            expires_at = data.get("expiresAt", 0)
+            status     = "expired" if now_ms > expires_at else ("used" if data.get("used") else "active")
+            codes.append({
+                "code":        doc.id,
+                "projectId":   data.get("projectId", ""),
+                "clubName":    data.get("clubName", ""),
+                "generatedBy": data.get("generatedBy", ""),
+                "createdAt":   data.get("createdAt", ""),
+                "status":      status
+            })
+        codes.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+        return jsonify({"total": len(codes), "codes": codes})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-@app.route("/licence/<pid>", methods=["POST"])
-def admin_update_licence(pid):
-    if not verifier_admin(): return jsonify({"error":"Non autorisé"}), 401
-    data = request.get_json() or {}; l = charger_licence(pid)
-    if l is None: return jsonify({"error":"Licence non trouvée"}), 404
+@app.route("/licence/<project_id>", methods=["POST"])
+def admin_update_licence(project_id):
+    """Met à jour une licence (admin) - endpoint legacy"""
+    if not verifier_admin():
+        return jsonify({"error": "Non autorisé"}), 401
+
+    data    = request.get_json() or {}
+    licence = charger_licence(project_id)
+    if licence is None:
+        return jsonify({"error": "Licence non trouvée"}), 404
+
     if "plan" in data and data["plan"] in PLANS:
-        pc = PLANS[data["plan"]]
-        l.update({"plan":data["plan"],"fonctionnalites":pc["fonctionnalites"],
-                  "maxCadres":pc["max_cadres"],"maxMembres":pc.get("max_membres",9999),"maxCreneaux":pc.get("max_creneaux",9999)})
-    for f in ["actif","dateExpiration","nomStructure","message"]:
-        if f in data: l[f] = data[f]
+        nouveau_plan       = data["plan"]
+        plan_config        = PLANS[nouveau_plan]
+        licence["plan"]    = nouveau_plan
+        licence["fonctionnalites"] = plan_config["fonctionnalites"]
+        licence["maxCadres"]       = plan_config["max_cadres"]
+        licence["maxMembres"]      = plan_config.get("max_membres", 9999)
+        licence["maxCreneaux"]     = plan_config.get("max_creneaux", 9999)
+
+    if "actif" in data:
+        licence["actif"] = bool(data["actif"])
+    if "dateExpiration" in data:
+        licence["dateExpiration"] = data["dateExpiration"]
     if "joursSupplementaires" in data:
         try:
-            d = datetime.fromisoformat(l["dateExpiration"].replace("Z","+00:00"))
-            if d.tzinfo: d = d.replace(tzinfo=None)
-        except: d = datetime.now()
-        if d < datetime.now(): d = datetime.now()
-        l["dateExpiration"] = (d + timedelta(days=int(data["joursSupplementaires"]))).isoformat()
-    sauvegarder_licence(pid, l)
-    return jsonify({"success":True,"licence":formater_licence_response(l)})
+            date_exp = datetime.fromisoformat(licence["dateExpiration"].replace("Z", "+00:00"))
+            if date_exp.tzinfo:
+                date_exp = date_exp.replace(tzinfo=None)
+        except:
+            date_exp = datetime.now()
+        if date_exp < datetime.now():
+            date_exp = datetime.now()
+        licence["dateExpiration"] = (date_exp + timedelta(days=int(data["joursSupplementaires"]))).isoformat()
+    if "nomStructure" in data:
+        licence["nomStructure"] = data["nomStructure"]
+    if "message" in data:
+        licence["message"] = data["message"]
 
-@app.route("/admin/licence/<pid>", methods=["PUT"])
-def admin_edit_licence(pid):
-    if not verifier_admin(): return jsonify({"error":"Non autorisé"}), 401
-    data = request.get_json() or {}; l = charger_licence(pid)
-    if l is None: return jsonify({"error":"Licence non trouvée"}), 404
+    sauvegarder_licence(project_id, licence)
+    return jsonify({"success": True, "licence": formater_licence_response(licence)})
+
+@app.route("/admin/licence/<project_id>", methods=["PUT"])
+def admin_edit_licence(project_id):
+    """Modifie une licence existante (admin) - endpoint dédié"""
+    if not verifier_admin():
+        return jsonify({"error": "Non autorisé"}), 401
+
+    data    = request.get_json() or {}
+    licence = charger_licence(project_id)
+    if licence is None:
+        return jsonify({"error": "Licence non trouvée"}), 404
+
     if "plan" in data and data["plan"] in PLANS:
-        pc = PLANS[data["plan"]]
-        l.update({"plan":data["plan"],"fonctionnalites":pc["fonctionnalites"]})
-        if "maxCadres" not in data: l["maxCadres"] = pc["max_cadres"]
-    if "duree" in data:
-        l["dateExpiration"] = (datetime.now() + timedelta(days=int(data["duree"]))).isoformat()
-        l["actif"] = True
-    for f in ["maxCadres","nomStructure"]:
-        if f in data: l[f] = data[f]
-    sauvegarder_licence(pid, l)
-    envoyer_notification("✏️ Licence modifiée", f"Project: {pid}\nPlan: {l.get('plan')}\nExpiration: {l.get('dateExpiration')}")
-    return jsonify({"success":True,"licence":formater_licence_response(l)})
+        nouveau_plan = data["plan"]
+        plan_config  = PLANS[nouveau_plan]
+        licence["plan"]            = nouveau_plan
+        licence["fonctionnalites"] = plan_config["fonctionnalites"]
+        if "maxCadres" not in data:
+            licence["maxCadres"]   = plan_config["max_cadres"]
+        licence["maxMembres"]      = plan_config.get("max_membres", 9999)
+        licence["maxCreneaux"]     = plan_config.get("max_creneaux", 9999)
 
-# ─────────────────────────────────────────────────────────
+    if "duree" in data:
+        licence["dateExpiration"] = (datetime.now() + timedelta(days=int(data["duree"]))).isoformat()
+        licence["actif"] = True
+    if "maxCadres" in data:
+        licence["maxCadres"] = int(data["maxCadres"])
+    if "nomStructure" in data:
+        licence["nomStructure"] = data["nomStructure"]
+
+    sauvegarder_licence(project_id, licence)
+    envoyer_notification(
+        "✏️ Licence modifiée",
+        f"Licence modifiée manuellement.\n\nProject ID: {project_id}\nPlan: {licence.get('plan')}\nExpiration: {licence.get('dateExpiration')}"
+    )
+    return jsonify({"success": True, "licence": formater_licence_response(licence)})
+
+# ============================================================
+# DÉMARRAGE
+# ============================================================
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=True)
