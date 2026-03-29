@@ -335,7 +335,7 @@ def index():
     return jsonify({
         "service": "ManagerPresence License Server",
         "status": "ok",
-        "version": "2.0.0",
+        "version": "2.0.1",
         "timestamp": datetime.now().isoformat()
     })
 
@@ -1077,10 +1077,8 @@ def admin_edit_licence(project_id):
     
     sauvegarder_licence(project_id, licence)
     
-    envoyer_notification(
-        "✏️ Licence modifiée",
-        f"Une licence a été modifiée manuellement.\n\nProject ID: {project_id}\nNouveau plan: {licence.get('plan')}\nExpiration: {licence.get('dateExpiration')}"
-    )
+    # Log console au lieu d'email (évite le timeout SMTP)
+    print(f"[ADMIN] Licence modifiée: {project_id} -> plan={licence.get('plan')}, expiration={licence.get('dateExpiration')}")
     
     return jsonify({"success": True, "licence": formater_licence_response(licence)})
 
