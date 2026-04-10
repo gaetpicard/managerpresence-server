@@ -3,3 +3,7 @@ flask-cors==4.0.0
 gunicorn==21.2.0
 firebase-admin
 stripe
+google-auth
+google-auth-oauthlib
+google-api-python-client
+requests
