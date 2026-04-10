@@ -18,6 +18,10 @@ from email.mime.multipart import MIMEMultipart
 import secrets
 import string
 import stripe
+import hashlib
+import urllib.parse
+import time
+import requests as http_requests
 
 app = Flask(__name__)
 CORS(app)
@@ -41,6 +45,22 @@ FIREBASE_CREDENTIALS = os.environ.get("FIREBASE_CREDENTIALS", "")
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLIC_KEY = os.environ.get("STRIPE_PUBLIC_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+
+# OAuth Google — Création de structures simplifiée
+GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+SERVER_BASE_URL      = os.environ.get("SERVER_BASE_URL", "https://managerpresence-server.onrender.com")
+
+# Scopes OAuth nécessaires pour créer un projet Firebase
+GOOGLE_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/firebase",
+]
+
+# Durée de validité du token de setup (24h)
+SETUP_TOKEN_VALIDITY_SECONDS = 86400
 
 # Prix Stripe (IDs des prix créés dans Stripe Dashboard)
 STRIPE_PRICES = {
@@ -1081,6 +1101,747 @@ def admin_edit_licence(project_id):
     print(f"[ADMIN] Licence modifiée: {project_id} -> plan={licence.get('plan')}, expiration={licence.get('dateExpiration')}")
     
     return jsonify({"success": True, "licence": formater_licence_response(licence)})
+
+
+# ============================================================
+# UTILITAIRES — CRÉATION DE STRUCTURE (mode simple)
+# ============================================================
+
+def sauvegarder_setup(token, data):
+    try:
+        db.collection("setup_sessions").document(token).set(data)
+        return True
+    except Exception as e:
+        print(f"Erreur sauvegarde setup: {e}")
+        return False
+
+def charger_setup(token):
+    try:
+        doc = db.collection("setup_sessions").document(token).get()
+        if doc.exists:
+            return doc.to_dict()
+        return None
+    except Exception as e:
+        print(f"Erreur chargement setup: {e}")
+        return None
+
+def supprimer_setup(token):
+    try:
+        db.collection("setup_sessions").document(token).delete()
+    except Exception as e:
+        print(f"Erreur suppression setup: {e}")
+
+def generer_token_setup():
+    return secrets.token_urlsafe(32)
+
+def envoyer_email_setup(gmail, club_name, setup_url):
+    if not SMTP_EMAIL or not SMTP_PASSWORD:
+        print(f"[SETUP EMAIL] URL de setup pour {gmail}: {setup_url}")
+        return True
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["From"]    = SMTP_EMAIL
+        msg["To"]      = gmail
+        msg["Subject"] = f"Créez votre espace {club_name} — ManagerPresence"
+        html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+  <h1 style="color:#1565C0;text-align:center">🏔️ ManagerPresence</h1>
+  <h2>Votre espace est presque prêt !</h2>
+  <p style="color:#555;font-size:16px">
+    La structure <strong>"{club_name}"</strong> a été initialisée.<br>
+    Il ne reste qu'une étape : vous connecter avec votre compte Google.
+  </p>
+  <div style="text-align:center;margin:30px 0">
+    <a href="{setup_url}"
+       style="background:#1565C0;color:white;padding:16px 32px;
+              text-decoration:none;border-radius:8px;font-size:16px;
+              font-weight:bold;display:inline-block">
+      Finaliser la création →
+    </a>
+  </div>
+  <p style="color:#888;font-size:13px;text-align:center">
+    Ce lien est valable 24 heures.<br>
+    Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.
+  </p>
+  <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+  <p style="color:#aaa;font-size:12px;text-align:center">
+    ManagerPresence — Données hébergées en France (Firebase europe-west9)
+  </p>
+</body></html>"""
+        msg.attach(MIMEText(html, "html"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.send_message(msg)
+        print(f"[SETUP] Email envoyé à {gmail}")
+        return True
+    except Exception as e:
+        print(f"[SETUP] Erreur envoi email: {e}")
+        return False
+
+def envoyer_email_confirmation(gmail, club_name, su_password):
+    if not SMTP_EMAIL or not SMTP_PASSWORD:
+        print(f"[CONFIRMATION] MDP SU pour {gmail}: {su_password}")
+        return True
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["From"]    = SMTP_EMAIL
+        msg["To"]      = gmail
+        msg["Subject"] = f"✅ Votre espace {club_name} est opérationnel !"
+        html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+  <h1 style="color:#1565C0;text-align:center">🏔️ ManagerPresence</h1>
+  <div style="background:#E8F5E9;border-radius:8px;padding:20px;margin-bottom:20px">
+    <h2 style="color:#2E7D32;margin:0">✅ Votre espace est opérationnel !</h2>
+  </div>
+  <p style="color:#555;font-size:16px">
+    La structure <strong>"{club_name}"</strong> est prête.
+  </p>
+  <div style="background:#FFF3E0;border-radius:8px;padding:20px;margin:20px 0;
+              border-left:4px solid #E65100">
+    <h3 style="color:#E65100;margin-top:0">🔐 Votre mot de passe Super Utilisateur</h3>
+    <div style="background:white;border-radius:4px;padding:12px;text-align:center;
+                font-family:monospace;font-size:22px;font-weight:bold;
+                color:#E65100;letter-spacing:2px">
+      {su_password}
+    </div>
+    <p style="color:#BF360C;font-size:13px;margin-bottom:0">
+      ⚠️ <strong>Conservez ce mot de passe précieusement.</strong><br>
+      Il ne peut pas être récupéré.
+    </p>
+  </div>
+  <h3>Comment accéder à votre espace ?</h3>
+  <ol style="color:#555;font-size:15px;line-height:1.8">
+    <li>Ouvrez l'application <strong>ManagerPresence</strong></li>
+    <li>Votre structure <strong>"{club_name}"</strong> apparaît automatiquement</li>
+    <li>Utilisez le mot de passe SU ci-dessus pour l'administration</li>
+  </ol>
+  <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+  <p style="color:#aaa;font-size:12px;text-align:center">
+    ManagerPresence — Données hébergées en France (Firebase europe-west9)<br>
+    Suppression possible depuis les Paramètres de l'application.
+  </p>
+</body></html>"""
+        msg.attach(MIMEText(html, "html"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.send_message(msg)
+        print(f"[CONFIRMATION] Email envoyé à {gmail}")
+        return True
+    except Exception as e:
+        print(f"[CONFIRMATION] Erreur envoi email: {e}")
+        return False
+
+def creer_projet_firebase(token_data, club_name, gmail):
+    """
+    Crée un projet Firebase sur le compte Google de l'utilisateur
+    via les APIs Google Cloud avec son access_token OAuth.
+    Retourne dict(project_id, app_id, api_key) ou None si erreur.
+    """
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=token_data["access_token"],
+            refresh_token=token_data.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+            scopes=GOOGLE_SCOPES
+        )
+
+        # 1. Générer un project_id unique
+        suffix    = secrets.token_hex(4)
+        safe_name = "".join(c.lower() if c.isalnum() else "-" for c in club_name)[:20].strip("-")
+        project_id = f"mp-{safe_name}-{suffix}"
+
+        # 2. Créer le projet Google Cloud
+        crm = build("cloudresourcemanager", "v1", credentials=creds)
+        crm.projects().create(body={
+            "projectId": project_id,
+            "name":      club_name
+        }).execute()
+        print(f"[FIREBASE] Projet GCloud créé: {project_id}")
+        time.sleep(6)
+
+        # 3. Activer Firebase sur ce projet
+        firebase_svc = build("firebase", "v1beta1", credentials=creds)
+        firebase_svc.projects().addFirebase(
+            project=f"projects/{project_id}", body={}
+        ).execute()
+        print(f"[FIREBASE] Firebase activé: {project_id}")
+        time.sleep(8)
+
+        # 4. Créer l'app Android
+        firebase_svc.projects().androidApps().create(
+            parent=f"projects/{project_id}",
+            body={"packageName": "com.managerpresence", "displayName": club_name}
+        ).execute()
+        time.sleep(6)
+
+        # Récupérer l'app_id
+        apps   = firebase_svc.projects().androidApps().list(
+            parent=f"projects/{project_id}"
+        ).execute()
+        app_id = apps["apps"][0]["appId"] if apps.get("apps") else ""
+        print(f"[FIREBASE] App Android: {app_id}")
+
+        # 5. Activer Firestore en europe-west9
+        fs_svc = build("firestore", "v1", credentials=creds)
+        try:
+            fs_svc.projects().databases().create(
+                parent=f"projects/{project_id}",
+                body={"type": "FIRESTORE_NATIVE", "locationId": "europe-west9"},
+                databaseId="(default)"
+            ).execute()
+            print(f"[FIREBASE] Firestore activé: {project_id}")
+            time.sleep(5)
+        except Exception as e:
+            print(f"[FIREBASE] Firestore (déjà actif ou erreur mineure): {e}")
+
+        # 6. Récupérer l'API key
+        api_key = ""
+        try:
+            keys_svc  = build("apikeys", "v2", credentials=creds)
+            keys_resp = keys_svc.projects().locations().keys().list(
+                parent=f"projects/{project_id}/locations/global"
+            ).execute()
+            if keys_resp.get("keys"):
+                key_name   = keys_resp["keys"][0]["name"]
+                key_detail = keys_svc.projects().locations().keys().getKeyString(
+                    name=key_name
+                ).execute()
+                api_key = key_detail.get("keyString", "")
+        except Exception as e:
+            print(f"[FIREBASE] Récupération API key: {e}")
+
+        print(f"[FIREBASE] Création terminée — project_id={project_id}")
+        return {"project_id": project_id, "app_id": app_id, "api_key": api_key}
+
+    except Exception as e:
+        print(f"[FIREBASE] Erreur création: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# ============================================================
+# ROUTES — CRÉATION DE STRUCTURE (mode simple)
+# ============================================================
+
+@app.route("/create-structure", methods=["POST"])
+def create_structure():
+    """
+    Étape 1 : L'app Android initie la création.
+    Body: { "club_name": str, "gmail": str }
+    """
+    data      = request.get_json() or {}
+    club_name = data.get("club_name", "").strip()
+    gmail     = data.get("gmail", "").strip().lower()
+
+    if not club_name:
+        return jsonify({"error": "Nom de structure manquant"}), 400
+    if not gmail or "@" not in gmail or "." not in gmail:
+        return jsonify({"error": "Adresse Gmail invalide"}), 400
+
+    token      = generer_token_setup()
+    expires_at = int(time.time()) + SETUP_TOKEN_VALIDITY_SECONDS
+
+    session_data = {
+        "club_name":        club_name,
+        "gmail":            gmail,
+        "token":            token,
+        "created_at":       datetime.now().isoformat(),
+        "expires_at":       expires_at,
+        "status":           "pending",
+        "project_id":       None,
+        "app_id":           None,
+        "api_key":          None,
+        "su_password_hash": None,
+    }
+
+    if not sauvegarder_setup(token, session_data):
+        return jsonify({"error": "Erreur serveur"}), 500
+
+    setup_url = f"{SERVER_BASE_URL}/setup/{token}"
+    envoyer_email_setup(gmail, club_name, setup_url)
+    envoyer_notification(
+        "🆕 Nouvelle demande de création",
+        f"Structure: {club_name}\nGmail: {gmail}\nToken: {token}"
+    )
+
+    return jsonify({
+        "success":   True,
+        "token":     token,
+        "message":   f"Email envoyé à {gmail}. Vérifiez votre boîte mail.",
+        "setup_url": setup_url
+    }), 201
+
+
+@app.route("/setup/<token>", methods=["GET"])
+def setup_page(token):
+    """Étape 2 : Page HTML affichée quand l'utilisateur clique le lien email."""
+    session = charger_setup(token)
+
+    if not session:
+        return """<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Lien invalide</title></head>
+<body style="font-family:Arial;text-align:center;padding:60px;color:#333">
+<h1>🏔️ ManagerPresence</h1>
+<h2 style="color:#C62828">❌ Lien invalide ou expiré</h2>
+<p>Recommencez la création depuis l'application.</p>
+</body></html>""", 404
+
+    if int(time.time()) > session.get("expires_at", 0):
+        return """<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Lien expiré</title></head>
+<body style="font-family:Arial;text-align:center;padding:60px;color:#333">
+<h1>🏔️ ManagerPresence</h1>
+<h2 style="color:#E65100">⏱️ Lien expiré</h2>
+<p>Ce lien était valable 24 heures. Recommencez depuis l'application.</p>
+</body></html>""", 410
+
+    if session.get("status") == "complete":
+        return f"""<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial;text-align:center;padding:60px;color:#333">
+<h1>🏔️ ManagerPresence</h1>
+<h2 style="color:#2E7D32">✅ Votre espace existe déjà !</h2>
+<p>Ouvrez l'application ManagerPresence pour y accéder.</p>
+</body></html>"""
+
+    club_name = session.get("club_name", "")
+    gmail     = session.get("gmail", "")
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Créer votre espace — ManagerPresence</title>
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:Arial,sans-serif;background:#F5F5F5;min-height:100vh;
+         display:flex;align-items:center;justify-content:center;padding:20px}}
+    .card{{background:white;border-radius:16px;padding:40px 32px;
+           max-width:420px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}}
+    .club{{background:#E3F2FD;border-radius:8px;padding:12px;margin:16px 0;
+           font-size:18px;font-weight:bold;color:#1565C0}}
+    .gmail{{background:#E8F5E9;border-radius:6px;padding:6px 12px;
+            font-size:13px;color:#2E7D32;margin-bottom:16px;display:inline-block}}
+    .steps{{text-align:left;background:#F8F9FA;border-radius:8px;padding:16px;
+            margin:16px 0;font-size:14px;color:#333;line-height:2.2}}
+    .btn{{display:inline-flex;align-items:center;gap:12px;background:white;
+          border:2px solid #DADCE0;border-radius:8px;padding:12px 24px;
+          font-size:15px;font-weight:bold;color:#333;text-decoration:none;
+          width:100%;justify-content:center;cursor:pointer}}
+    .btn:hover{{box-shadow:0 2px 8px rgba(0,0,0,.15)}}
+    .rgpd{{font-size:11px;color:#aaa;margin-top:16px;line-height:1.5}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size:48px;margin-bottom:8px">🏔️</div>
+    <h1 style="color:#1565C0;font-size:22px;margin-bottom:4px">ManagerPresence</h1>
+    <p style="color:#888;font-size:13px;margin-bottom:16px">Création de votre espace</p>
+    <div class="club">📋 {club_name}</div>
+    <div class="gmail">📧 {gmail}</div>
+    <div class="steps">
+      <div>1️⃣ &nbsp;Connectez-vous avec Google</div>
+      <div>2️⃣ &nbsp;Autorisez la création Firebase</div>
+      <div>3️⃣ &nbsp;Définissez votre mot de passe SU</div>
+    </div>
+    <p style="color:#555;font-size:14px;margin-bottom:20px">
+      Votre espace sera créé sur <strong>votre propre compte Google</strong>.<br>
+      Nous n'avons accès à aucune de vos données.
+    </p>
+    <a class="btn" href="/setup/{token}/oauth">
+      <svg width="20" height="20" viewBox="0 0 24 24">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+      </svg>
+      Se connecter avec Google
+    </a>
+    <p class="rgpd">
+      Données hébergées en France (Firebase europe-west9).<br>
+      Suppression possible depuis l'application à tout moment.
+    </p>
+  </div>
+</body>
+</html>"""
+
+
+@app.route("/setup/<token>/oauth", methods=["GET"])
+def setup_oauth_redirect(token):
+    """Étape 3 : Redirige vers Google OAuth."""
+    session = charger_setup(token)
+    if not session:
+        return "Session invalide", 404
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return "OAuth non configuré sur le serveur", 500
+
+    params = {
+        "client_id":     GOOGLE_CLIENT_ID,
+        "redirect_uri":  f"{SERVER_BASE_URL}/setup/oauth/callback",
+        "response_type": "code",
+        "scope":         " ".join(GOOGLE_SCOPES),
+        "access_type":   "offline",
+        "prompt":        "consent",
+        "state":         token,
+        "login_hint":    session.get("gmail", "")
+    }
+    oauth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    return redirect(oauth_url)
+
+
+@app.route("/setup/oauth/callback", methods=["GET"])
+def setup_oauth_callback():
+    """Étape 4 : Callback OAuth — affiche page d'attente qui déclenche la création."""
+    code  = request.args.get("code", "")
+    token = request.args.get("state", "")
+    error = request.args.get("error", "")
+
+    if error:
+        return f"""<html><body style="font-family:Arial;text-align:center;padding:60px">
+<h2 style="color:#C62828">❌ Autorisation refusée</h2>
+<p>Fermez cette page et recommencez depuis l'application.</p>
+</body></html>""", 400
+
+    session = charger_setup(token)
+    if not session:
+        return "<html><body>Session invalide ou expirée.</body></html>", 404
+
+    sauvegarder_setup(token, {{**session, "oauth_code": code, "status": "oauth_done"}})
+    club_name = session.get("club_name", "")
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Création en cours — ManagerPresence</title>
+  <style>
+    body{{font-family:Arial;background:#F5F5F5;min-height:100vh;
+         display:flex;align-items:center;justify-content:center;padding:20px}}
+    .card{{background:white;border-radius:16px;padding:40px;
+           max-width:400px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}}
+    .spinner{{width:48px;height:48px;border:4px solid #E3F2FD;
+              border-top:4px solid #1565C0;border-radius:50%;
+              animation:spin 1s linear infinite;margin:20px auto}}
+    @keyframes spin{{to{{transform:rotate(360deg)}}}}
+  </style>
+  <script>
+    async function lancer() {{
+      await fetch('/setup/{token}/create', {{method:'POST'}});
+      poll();
+    }}
+    async function poll() {{
+      const r = await fetch('/setup/{token}/status');
+      const d = await r.json();
+      document.getElementById('msg').textContent = d.message || '';
+      if (d.status === 'complete') {{
+        window.location.href = '/setup/{token}/done';
+      }} else if (d.status === 'error') {{
+        document.getElementById('msg').textContent = '❌ ' + (d.error || 'Erreur inconnue');
+        document.querySelector('.spinner').style.display = 'none';
+      }} else {{
+        setTimeout(poll, 3000);
+      }}
+    }}
+    window.onload = lancer;
+  </script>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size:48px">🏔️</div>
+    <h2 style="color:#1565C0;margin:12px 0">Création en cours...</h2>
+    <p style="color:#555">Nous configurons <strong>{club_name}</strong></p>
+    <div class="spinner"></div>
+    <p style="color:#666;font-size:14px" id="msg">Initialisation du projet Firebase...</p>
+    <p style="color:#aaa;font-size:12px;margin-top:16px">
+      Cette opération prend 30 à 60 secondes.<br>Ne fermez pas cette page.
+    </p>
+  </div>
+</body>
+</html>"""
+
+
+@app.route("/setup/<token>/create", methods=["POST"])
+def setup_create_firebase(token):
+    """Étape 5 : Crée le projet Firebase (appelé par le JS de la page callback)."""
+    session = charger_setup(token)
+    if not session:
+        return jsonify({{"error": "Session invalide"}}), 404
+
+    status = session.get("status", "")
+    if status in ("firebase_done", "complete"):
+        return jsonify({{"success": True, "status": status}})
+
+    oauth_code = session.get("oauth_code", "")
+    if not oauth_code:
+        return jsonify({{"error": "Code OAuth manquant"}}), 400
+
+    # Échanger le code OAuth contre un access_token
+    try:
+        token_resp = http_requests.post("https://oauth2.googleapis.com/token", data={{
+            "code":          oauth_code,
+            "client_id":     GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri":  f"{{SERVER_BASE_URL}}/setup/oauth/callback",
+            "grant_type":    "authorization_code"
+        }})
+        token_data = token_resp.json()
+        if "error" in token_data:
+            err = token_data.get("error_description", "OAuth error")
+            sauvegarder_setup(token, {{**session, "status": "error", "error": err}})
+            return jsonify({{"error": err}}), 400
+    except Exception as e:
+        sauvegarder_setup(token, {{**session, "status": "error", "error": str(e)}})
+        return jsonify({{"error": str(e)}}), 500
+
+    club_name = session.get("club_name", "")
+    gmail     = session.get("gmail", "")
+    sauvegarder_setup(token, {{**session, "status": "creating"}})
+
+    result = creer_projet_firebase(token_data, club_name, gmail)
+
+    if not result:
+        sauvegarder_setup(token, {{**session, "status": "error",
+                                   "error": "Échec création projet Firebase"}})
+        return jsonify({{"error": "Échec création Firebase"}}), 500
+
+    # Créer la licence trial
+    licence = creer_licence_trial(result["project_id"], club_name)
+    sauvegarder_licence(result["project_id"], licence)
+
+    sauvegarder_setup(token, {{
+        **session,
+        "status":     "firebase_done",
+        "project_id": result["project_id"],
+        "app_id":     result["app_id"],
+        "api_key":    result["api_key"],
+    }})
+
+    return jsonify({{"success": True, "status": "firebase_done"}})
+
+
+@app.route("/setup/<token>/status", methods=["GET"])
+def setup_status(token):
+    """Poll du statut de création."""
+    session = charger_setup(token)
+    if not session:
+        return jsonify({{"status": "error", "error": "Session invalide"}})
+
+    status   = session.get("status", "pending")
+    messages = {{
+        "pending":       "En attente...",
+        "oauth_done":    "Authentification réussie...",
+        "creating":      "Création du projet Firebase (30-60s)...",
+        "firebase_done": "Projet créé ! Finalisation...",
+        "complete":      "Votre espace est prêt !",
+        "error":         session.get("error", "Erreur inconnue")
+    }}
+    return jsonify({{
+        "status":  status,
+        "message": messages.get(status, status),
+        "error":   session.get("error") if status == "error" else None
+    }})
+
+
+@app.route("/setup/<token>/done", methods=["GET"])
+def setup_done_page(token):
+    """Étape 6 : Page de définition du mot de passe SU."""
+    session = charger_setup(token)
+    if not session or session.get("status") not in ("firebase_done", "complete"):
+        return redirect(f"/setup/{token}")
+
+    club_name = session.get("club_name", "")
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mot de passe SU — ManagerPresence</title>
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:Arial;background:#F5F5F5;min-height:100vh;
+         display:flex;align-items:center;justify-content:center;padding:20px}}
+    .card{{background:white;border-radius:16px;padding:40px 32px;
+           max-width:420px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08)}}
+    .warn{{background:#FFF3E0;border-left:4px solid #E65100;border-radius:4px;
+           padding:12px;font-size:13px;color:#E65100;margin-bottom:20px;line-height:1.5}}
+    input{{width:100%;padding:12px;border:2px solid #E0E0E0;border-radius:8px;
+           font-size:16px;margin-bottom:12px;font-family:monospace}}
+    input:focus{{outline:none;border-color:#1565C0}}
+    button{{width:100%;padding:14px;background:#1565C0;color:white;border:none;
+            border-radius:8px;font-size:16px;font-weight:bold;cursor:pointer}}
+    button:disabled{{background:#90CAF9;cursor:not-allowed}}
+    #msg{{margin-top:12px;font-size:13px;text-align:center}}
+    .ok{{color:#2E7D32}}.err{{color:#C62828}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="text-align:center;font-size:40px;margin-bottom:16px">🔐</div>
+    <h1 style="text-align:center;color:#1565C0;margin-bottom:8px">Mot de passe SU</h1>
+    <p style="color:#555;text-align:center;margin-bottom:20px;font-size:14px">
+      Structure : <strong>{club_name}</strong>
+    </p>
+    <div class="warn">
+      ⚠️ Ce mot de passe donne accès aux fonctions d'administration avancées.<br>
+      <strong>Il ne peut pas être récupéré.</strong> Notez-le précieusement.
+    </div>
+    <input type="password" id="pwd1" placeholder="Votre mot de passe SU (min. 8 caractères)"
+           minlength="8" oninput="verifier()">
+    <input type="password" id="pwd2" placeholder="Confirmez le mot de passe"
+           minlength="8" oninput="verifier()">
+    <button id="btn" onclick="valider()" disabled>✅ Terminer la configuration</button>
+    <div id="msg"></div>
+    <p style="color:#aaa;font-size:11px;text-align:center;margin-top:16px">
+      Minimum 8 caractères.
+    </p>
+  </div>
+  <script>
+    function verifier() {{
+      const p1 = document.getElementById('pwd1').value;
+      const p2 = document.getElementById('pwd2').value;
+      const btn = document.getElementById('btn');
+      const msg = document.getElementById('msg');
+      if (p1.length >= 8 && p1 === p2) {{
+        btn.disabled = false; msg.textContent = '';
+      }} else if (p2.length > 0 && p1 !== p2) {{
+        btn.disabled = true;
+        msg.textContent = 'Les mots de passe ne correspondent pas.';
+        msg.className = 'err';
+      }} else {{ btn.disabled = true; }}
+    }}
+    async function valider() {{
+      const pwd = document.getElementById('pwd1').value;
+      const btn = document.getElementById('btn');
+      const msg = document.getElementById('msg');
+      btn.disabled = true; btn.textContent = 'Enregistrement...';
+      const r = await fetch('/setup/{token}/finalize', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{su_password: pwd}})
+      }});
+      const d = await r.json();
+      if (d.success) {{
+        msg.textContent = '✅ Vérifiez votre email !'; msg.className = 'ok';
+        btn.textContent = '✅ Configuration terminée !';
+        setTimeout(() => {{ window.location.href = '/setup/{token}/success'; }}, 2000);
+      }} else {{
+        msg.textContent = '❌ ' + (d.error || 'Erreur'); msg.className = 'err';
+        btn.disabled = false; btn.textContent = '✅ Terminer la configuration';
+      }}
+    }}
+  </script>
+</body>
+</html>"""
+
+
+@app.route("/setup/<token>/finalize", methods=["POST"])
+def setup_finalize(token):
+    """Étape 7 : Hash du mot de passe SU + envoi email de confirmation."""
+    session = charger_setup(token)
+    if not session:
+        return jsonify({"error": "Session invalide"}), 404
+
+    data        = request.get_json() or {}
+    su_password = data.get("su_password", "").strip()
+
+    if len(su_password) < 8:
+        return jsonify({"error": "Mot de passe trop court (minimum 8 caractères)"}), 400
+
+    su_hash    = hashlib.sha256(su_password.encode()).hexdigest()
+    project_id = session.get("project_id", "")
+    club_name  = session.get("club_name", "")
+    gmail      = session.get("gmail", "")
+    app_id     = session.get("app_id", "")
+    api_key    = session.get("api_key", "")
+
+    sauvegarder_setup(token, {
+        **session,
+        "status":           "complete",
+        "su_password_hash": su_hash,
+        "completed_at":     datetime.now().isoformat()
+    })
+
+    # Envoyer l'email de confirmation avec le mot de passe SU en clair
+    envoyer_email_confirmation(gmail, club_name, su_password)
+
+    envoyer_notification(
+        "✅ Structure créée",
+        f"Structure: {club_name}\nGmail: {gmail}\nProject: {project_id}"
+    )
+
+    return jsonify({
+        "success":    True,
+        "project_id": project_id,
+        "app_id":     app_id,
+        "api_key":    api_key,
+    })
+
+
+@app.route("/setup/<token>/success", methods=["GET"])
+def setup_success(token):
+    """Étape 8 : Page finale de succès."""
+    session   = charger_setup(token)
+    club_name = session.get("club_name", "Votre structure") if session else "Votre structure"
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Espace créé — ManagerPresence</title>
+<style>
+  body{{font-family:Arial;background:#F5F5F5;min-height:100vh;
+       display:flex;align-items:center;justify-content:center;padding:20px}}
+  .card{{background:white;border-radius:16px;padding:40px 32px;
+         max-width:420px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}}
+</style></head>
+<body>
+  <div class="card">
+    <div style="font-size:64px;margin-bottom:16px">✅</div>
+    <h1 style="color:#2E7D32;margin-bottom:12px">Votre espace est prêt !</h1>
+    <p style="color:#555;font-size:16px;margin-bottom:24px">
+      <strong>{club_name}</strong> est opérationnel.
+    </p>
+    <div style="background:#E8F5E9;border-radius:8px;padding:16px;margin-bottom:20px;
+                font-size:14px;color:#2E7D32;line-height:1.8">
+      📧 Email de confirmation envoyé avec votre mot de passe SU.<br>
+      📱 Ouvrez l'application ManagerPresence.<br>
+      🎉 Votre structure apparaît automatiquement.
+    </div>
+    <p style="color:#aaa;font-size:12px">Vous pouvez fermer cette page.</p>
+  </div>
+</body></html>"""
+
+
+@app.route("/credentials/<token>", methods=["GET"])
+def get_credentials(token):
+    """
+    L'app Android poll cet endpoint pour récupérer les credentials
+    une fois la création terminée.
+    """
+    session = charger_setup(token)
+    if not session:
+        return jsonify({"status": "not_found"}), 404
+
+    status = session.get("status", "pending")
+    if status != "complete":
+        return jsonify({"status": status, "message": "Création en cours..."})
+
+    return jsonify({
+        "status":           "complete",
+        "project_id":       session.get("project_id", ""),
+        "app_id":           session.get("app_id", ""),
+        "api_key":          session.get("api_key", ""),
+        "su_password_hash": session.get("su_password_hash", ""),
+        "club_name":        session.get("club_name", ""),
+    })
 
 # ============================================================
 # DÉMARRAGE
