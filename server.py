@@ -18,6 +18,7 @@ from email.mime.multipart import MIMEMultipart
 import secrets
 import string
 import stripe
+import threading
 import hashlib
 import urllib.parse
 import time
@@ -1366,11 +1367,16 @@ def create_structure():
         return jsonify({"error": "Erreur serveur"}), 500
 
     setup_url = f"{SERVER_BASE_URL}/setup/{token}"
-    envoyer_email_setup(gmail, club_name, setup_url)
-    envoyer_notification(
-        "🆕 Nouvelle demande de création",
-        f"Structure: {club_name}\nGmail: {gmail}\nToken: {token}"
-    )
+
+    # Répondre immédiatement à l'app, envoyer les emails en arrière-plan
+    def envoyer_emails_async():
+        envoyer_email_setup(gmail, club_name, setup_url)
+        envoyer_notification(
+            "🆕 Nouvelle demande de création",
+            f"Structure: {club_name}\nGmail: {gmail}\nToken: {token}"
+        )
+
+    threading.Thread(target=envoyer_emails_async, daemon=True).start()
 
     return jsonify({
         "success":   True,
