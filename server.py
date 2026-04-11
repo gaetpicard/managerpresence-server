@@ -39,6 +39,9 @@ SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", "")
 
+# Resend API (remplace SMTP pour les emails de setup)
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+
 # Firebase Configuration
 FIREBASE_CREDENTIALS = os.environ.get("FIREBASE_CREDENTIALS", "")
 
@@ -1136,14 +1139,11 @@ def generer_token_setup():
     return secrets.token_urlsafe(32)
 
 def envoyer_email_setup(gmail, club_name, setup_url):
-    if not SMTP_EMAIL or not SMTP_PASSWORD:
-        print(f"[SETUP EMAIL] URL de setup pour {gmail}: {setup_url}")
+    """Envoie l'email de setup via Resend API (HTTP, pas SMTP)"""
+    if not RESEND_API_KEY:
+        print(f"[SETUP EMAIL] RESEND_API_KEY manquant — URL: {setup_url}")
         return True
     try:
-        msg = MIMEMultipart("alternative")
-        msg["From"]    = SMTP_EMAIL
-        msg["To"]      = gmail
-        msg["Subject"] = f"Créez votre espace {club_name} — ManagerPresence"
         html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
@@ -1170,25 +1170,39 @@ def envoyer_email_setup(gmail, club_name, setup_url):
     ManagerPresence — Données hébergées en France (Firebase europe-west9)
   </p>
 </body></html>"""
-        msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(SMTP_EMAIL, SMTP_PASSWORD)
-            server.send_message(msg)
-        print(f"[SETUP] Email envoyé à {gmail}")
+
+        import urllib.request
+        payload = json.dumps({
+            "from": "ManagerPresence <onboarding@resend.dev>",
+            "to": [gmail],
+            "subject": f"Créez votre espace {club_name} — ManagerPresence",
+            "html": html
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+            print(f"[SETUP] Email Resend envoyé à {gmail} — id: {result.get('id')}")
         return True
     except Exception as e:
-        print(f"[SETUP] Erreur envoi email: {e}")
+        print(f"[SETUP] Erreur envoi email Resend: {e}")
         return False
 
 def envoyer_email_confirmation(gmail, club_name, su_password):
-    if not SMTP_EMAIL or not SMTP_PASSWORD:
+    """Envoie l'email de confirmation avec le mot de passe SU via Resend"""
+    if not RESEND_API_KEY:
         print(f"[CONFIRMATION] MDP SU pour {gmail}: {su_password}")
         return True
     try:
-        msg = MIMEMultipart("alternative")
-        msg["From"]    = SMTP_EMAIL
-        msg["To"]      = gmail
-        msg["Subject"] = f"✅ Votre espace {club_name} est opérationnel !"
+        import urllib.request
         html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
@@ -1220,19 +1234,32 @@ def envoyer_email_confirmation(gmail, club_name, su_password):
   </ol>
   <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
   <p style="color:#aaa;font-size:12px;text-align:center">
-    ManagerPresence — Données hébergées en France (Firebase europe-west9)<br>
-    Suppression possible depuis les Paramètres de l'application.
+    ManagerPresence — Données hébergées en France (Firebase europe-west9)
   </p>
 </body></html>"""
-        msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(SMTP_EMAIL, SMTP_PASSWORD)
-            server.send_message(msg)
-        print(f"[CONFIRMATION] Email envoyé à {gmail}")
+        payload = json.dumps({
+            "from": "ManagerPresence <onboarding@resend.dev>",
+            "to": [gmail],
+            "subject": f"✅ Votre espace {club_name} est opérationnel !",
+            "html": html
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+            print(f"[CONFIRMATION] Email Resend envoyé à {gmail} — id: {result.get('id')}")
         return True
     except Exception as e:
-        print(f"[CONFIRMATION] Erreur envoi email: {e}")
+        print(f"[CONFIRMATION] Erreur envoi email Resend: {e}")
         return False
+
 
 def creer_projet_firebase(token_data, club_name, gmail):
     """
