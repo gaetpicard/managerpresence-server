@@ -1570,7 +1570,7 @@ def setup_oauth_callback():
   </style>
   <script>
     async function lancer() {{
-      await fetch('/setup/{token}/create', {{method:'POST'});
+      await fetch('/setup/{token}/create', {{method:'POST'}});
       poll();
     }}
     async function poll() {{
@@ -1621,11 +1621,11 @@ def setup_create_firebase(token):
 
     # Échanger le code OAuth contre un access_token
     try:
-        token_resp = http_requests.post("https://oauth2.googleapis.com/token", data={{
+        token_resp = http_requests.post("https://oauth2.googleapis.com/token", data={
             "code":          oauth_code,
             "client_id":     GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
-            "redirect_uri":  f"{{SERVER_BASE_URL}}/setup/oauth/callback",
+            "redirect_uri":  f"{SERVER_BASE_URL}/setup/oauth/callback",
             "grant_type":    "authorization_code"
         })
         token_data = token_resp.json()
@@ -1644,7 +1644,7 @@ def setup_create_firebase(token):
     result = creer_projet_firebase(token_data, club_name, gmail)
 
     if not result:
-        sauvegarder_setup(token, {{**session, "status": "error",
+        sauvegarder_setup(token, {**session, "status": "error",
                                    "error": "Échec création projet Firebase"})
         return jsonify({"error": "Échec création Firebase"}), 500
 
@@ -1762,8 +1762,8 @@ def setup_done_page(token):
       const r = await fetch('/setup/{token}/finalize', {{
         method: 'POST',
         headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{su_password: pwd})
-      });
+        body: JSON.stringify({{su_password: pwd}})
+      }});
       const d = await r.json();
       if (d.success) {{
         msg.textContent = '✅ Vérifiez votre email !'; msg.className = 'ok';
