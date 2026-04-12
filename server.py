@@ -1173,7 +1173,7 @@ def envoyer_email_setup(gmail, club_name, setup_url):
 
         import urllib.request
         payload = json.dumps({
-            "sender": {"name": "ManagerPresence", "email": "noreply@managerpresence.fr"},
+            "sender": {"name": "ManagerPresence", "email": "cp.support.dev@gmail.com"},
             "to": [{"email": gmail}],
             "subject": f"Créez votre espace {club_name} — ManagerPresence",
             "htmlContent": html
@@ -1239,7 +1239,7 @@ def envoyer_email_confirmation(gmail, club_name, su_password):
 </body></html>"""
         import urllib.request
         payload = json.dumps({
-            "sender": {"name": "ManagerPresence", "email": "noreply@managerpresence.fr"},
+            "sender": {"name": "ManagerPresence", "email": "cp.support.dev@gmail.com"},
             "to": [{"email": gmail}],
             "subject": f"✅ Votre espace {club_name} est opérationnel !",
             "htmlContent": html
