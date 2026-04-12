@@ -39,8 +39,8 @@ SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", "")
 
-# Resend API (remplace SMTP pour les emails de setup)
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+# Brevo API (envoi emails de setup)
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
 
 # Firebase Configuration
 FIREBASE_CREDENTIALS = os.environ.get("FIREBASE_CREDENTIALS", "")
@@ -1139,9 +1139,9 @@ def generer_token_setup():
     return secrets.token_urlsafe(32)
 
 def envoyer_email_setup(gmail, club_name, setup_url):
-    """Envoie l'email de setup via Resend API (HTTP, pas SMTP)"""
-    if not RESEND_API_KEY:
-        print(f"[SETUP EMAIL] RESEND_API_KEY manquant — URL: {setup_url}")
+    """Envoie l'email de setup via Brevo API"""
+    if not BREVO_API_KEY:
+        print(f"[SETUP EMAIL] BREVO_API_KEY manquant — URL: {setup_url}")
         return True
     try:
         html = f"""<!DOCTYPE html>
@@ -1173,33 +1173,33 @@ def envoyer_email_setup(gmail, club_name, setup_url):
 
         import urllib.request
         payload = json.dumps({
-            "from": "ManagerPresence <onboarding@resend.dev>",
-            "to": [gmail],
+            "sender": {"name": "ManagerPresence", "email": "noreply@managerpresence.fr"},
+            "to": [{"email": gmail}],
             "subject": f"Créez votre espace {club_name} — ManagerPresence",
-            "html": html
+            "htmlContent": html
         }).encode("utf-8")
-
         req = urllib.request.Request(
-            "https://api.resend.com/emails",
+            "https://api.brevo.com/v3/smtp/email",
             data=payload,
             headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json"
+                "api-key": BREVO_API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "application/json"
             },
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read().decode())
-            print(f"[SETUP] Email Resend envoyé à {gmail} — id: {result.get('id')}")
+            print(f"[SETUP] Email Brevo envoyé à {gmail} — id: {result.get('messageId')}")
         return True
     except Exception as e:
-        print(f"[SETUP] Erreur envoi email Resend: {e}")
+        print(f"[SETUP] Erreur envoi email Brevo: {e}")
         return False
 
 def envoyer_email_confirmation(gmail, club_name, su_password):
-    """Envoie l'email de confirmation avec le mot de passe SU via Resend"""
-    if not RESEND_API_KEY:
-        print(f"[CONFIRMATION] MDP SU pour {gmail}: {su_password}")
+    """Envoie l'email de confirmation avec le mot de passe SU via Brevo"""
+    if not BREVO_API_KEY:
+        print(f"[CONFIRMATION] BREVO_API_KEY manquant — MDP: {su_password}")
         return True
     try:
         import urllib.request
@@ -1237,27 +1237,29 @@ def envoyer_email_confirmation(gmail, club_name, su_password):
     ManagerPresence — Données hébergées en France (Firebase europe-west9)
   </p>
 </body></html>"""
+        import urllib.request
         payload = json.dumps({
-            "from": "ManagerPresence <onboarding@resend.dev>",
-            "to": [gmail],
+            "sender": {"name": "ManagerPresence", "email": "noreply@managerpresence.fr"},
+            "to": [{"email": gmail}],
             "subject": f"✅ Votre espace {club_name} est opérationnel !",
-            "html": html
+            "htmlContent": html
         }).encode("utf-8")
         req = urllib.request.Request(
-            "https://api.resend.com/emails",
+            "https://api.brevo.com/v3/smtp/email",
             data=payload,
             headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json"
+                "api-key": BREVO_API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "application/json"
             },
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read().decode())
-            print(f"[CONFIRMATION] Email Resend envoyé à {gmail} — id: {result.get('id')}")
+            print(f"[CONFIRMATION] Email Brevo envoyé à {gmail} — id: {result.get('messageId')}")
         return True
     except Exception as e:
-        print(f"[CONFIRMATION] Erreur envoi email Resend: {e}")
+        print(f"[CONFIRMATION] Erreur envoi email Brevo: {e}")
         return False
 
 
