@@ -1398,14 +1398,15 @@ def create_structure():
     setup_url = f"{SERVER_BASE_URL}/setup/{token}"
 
     # Répondre immédiatement à l'app, envoyer les emails en arrière-plan
-    # Notifier l'admin (cp.support.dev) sans bloquer la réponse
-    def notifier_admin():
+    # Envoyer email à l'utilisateur + notifier l'admin
+    def envoyer_emails():
+        envoyer_email_setup(gmail, club_name, setup_url)
         envoyer_notification(
             "🆕 Nouvelle structure en cours de création",
             f"Structure: {club_name}\nGmail: {gmail}\nToken: {token}\nURL setup: {setup_url}"
         )
 
-    threading.Thread(target=notifier_admin, daemon=True).start()
+    threading.Thread(target=envoyer_emails, daemon=True).start()
 
     return jsonify({
         "success":   True,
@@ -1574,106 +1575,92 @@ def setup_oauth_callback():
     club_name = session.get("club_name", "")
     gmail = session.get("gmail", "")
 
-    firebase_url = f"https://console.firebase.google.com/u/0/?hl=fr"
+    # Échanger immédiatement le code OAuth et sauvegarder le token
+    # pour que l'app puisse lancer la configuration dès qu'elle revient
+    def echanger_oauth_code():
+        try:
+            token_resp = http_requests.post("https://oauth2.googleapis.com/token", data={
+                "code":          code,
+                "client_id":     GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri":  f"{SERVER_BASE_URL}/setup/oauth/callback",
+                "grant_type":    "authorization_code"
+            })
+            token_data = token_resp.json()
+            if "error" not in token_data:
+                sess = charger_setup(token)
+                if sess:
+                    sauvegarder_setup(token, {**sess, "token_data": token_data, "status": "oauth_done"})
+                    print(f"[OAUTH] Token échangé et sauvegardé pour {token[:8]}...")
+                    # Lancer la configuration Firebase en background
+                    threading.Thread(
+                        target=_configure_firebase_logic,
+                        args=(token, {**sess, "token_data": token_data, "status": "oauth_done"}),
+                        daemon=True
+                    ).start()
+            else:
+                print(f"[OAUTH] Erreur échange: {token_data.get('error_description')}")
+        except Exception as e:
+            print(f"[OAUTH] Erreur: {e}")
+
+    threading.Thread(target=echanger_oauth_code, daemon=True).start()
+
+    firebase_url = f"https://console.firebase.google.com/?hl=fr"
+    deep_link = f"managerpresence://setup/{token}"
 
     return f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Créez votre projet Firebase — ManagerPresence</title>
+  <title>Authentification réussie — ManagerPresence</title>
+  <title>Authentification réussie — ManagerPresence</title>
   <style>
     *{{box-sizing:border-box;margin:0;padding:0}}
-    body{{font-family:Arial;background:#F5F5F5;min-height:100vh;
+    body{{font-family:Arial,sans-serif;background:#F5F5F5;min-height:100vh;
          display:flex;align-items:center;justify-content:center;padding:20px}}
-    .card{{background:white;border-radius:16px;padding:32px 24px;
+    .card{{background:white;border-radius:16px;padding:40px 32px;
            max-width:440px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}}
-    .step-box{{background:#F8F9FA;border-radius:8px;padding:14px;
-               margin:12px 0;text-align:left;font-size:13px;color:#333;line-height:1.8}}
-    .step-box strong{{color:#1565C0}}
-    .btn-firebase{{display:block;background:#FF6D00;color:white;
-                   text-decoration:none;border-radius:8px;padding:14px 20px;
-                   font-size:15px;font-weight:bold;margin:16px 0}}
-    .btn-done{{display:block;background:#2E7D32;color:white;border:none;
-               border-radius:8px;padding:14px 20px;font-size:15px;
-               font-weight:bold;width:100%;cursor:pointer;margin-top:8px}}
-    .warn{{background:#FFF3E0;border-radius:8px;padding:12px;
-           font-size:12px;color:#E65100;margin-top:12px}}
+    .btn-app{{display:block;background:#1565C0;color:white;text-decoration:none;
+              border-radius:8px;padding:16px 20px;font-size:16px;font-weight:bold;margin:20px 0}}
+    .info{{background:#E8F5E9;border-radius:8px;padding:14px;
+           font-size:13px;color:#2E7D32;margin:12px 0;text-align:left}}
+    .steps{{background:#FFF9C4;border-radius:8px;padding:14px;
+            font-size:12px;color:#333;text-align:left;line-height:1.9;margin:12px 0}}
   </style>
 </head>
 <body>
   <div class="card">
-    <div style="font-size:40px;margin-bottom:8px">🏔️</div>
-    <h2 style="color:#1565C0;margin-bottom:4px">Étape 2 sur 3</h2>
-    <p style="color:#555;font-size:14px;margin-bottom:4px">
-      Créez votre espace Firebase pour<br><strong>{club_name}</strong>
+    <div style="font-size:48px;margin-bottom:8px">✅</div>
+    <h2 style="color:#2E7D32;margin-bottom:8px">Compte Google connecté !</h2>
+    <p style="color:#555;font-size:14px;margin-bottom:16px">
+      Bonjour <strong>{gmail}</strong><br>
+      Il reste une étape : créer votre projet Firebase.
     </p>
-    <p style="color:#888;font-size:12px;margin-bottom:12px">
-      Connecté avec {gmail}
-    </p>
-
-    <div class="step-box">
-      <div>1️⃣ &nbsp;Cliquez <strong>"Ouvrir Firebase Console"</strong> ci-dessous</div>
-      <div>2️⃣ &nbsp;Cliquez <strong>"Créer un projet"</strong></div>
-      <div>3️⃣ &nbsp;Donnez un nom (ex: <strong>"{club_name}"</strong>)</div>
-      <div>4️⃣ &nbsp;Cliquez <strong>"Continuer"</strong> → <strong>"Continuer"</strong> → <strong>"Créer le projet"</strong></div>
-      <div>5️⃣ &nbsp;Attendez que le projet soit créé puis revenez ici</div>
+    <div class="info">
+      📱 <strong>Retournez dans l'application ManagerPresence</strong><br>
+      Elle vous guidera pour créer votre projet Firebase.
     </div>
-
-    <a class="btn-firebase" href="{firebase_url}" target="_blank">
-      🔥 Ouvrir Firebase Console →
+    <a class="btn-app" href="{deep_link}">
+      📱 Retourner dans l'app →
     </a>
-
-    <div class="warn">
-      ⚠️ <strong>Important :</strong> Revenez sur cette page après avoir créé votre projet.<br>
-      Ne fermez pas cet onglet et <strong>n'utilisez pas la flèche retour</strong> du navigateur !
+    <p style="color:#aaa;font-size:11px;margin:8px 0">
+      Si le bouton ne fonctionne pas, revenez manuellement dans l'app.<br>
+      Elle reprendra automatiquement.
+    </p>
+    <div class="steps">
+      <strong>📋 Ce qui vous attend dans l'app :</strong><br>
+      1. Cliquez «Ouvrir Firebase Console»<br>
+      2. Créez un projet (désactivez Gemini et Analytics)<br>
+      3. Revenez dans l'app — configuration automatique ✅
     </div>
-    <div style="background:#E3F2FD;border-radius:8px;padding:12px;margin-top:8px;font-size:12px;color:#1565C0;text-align:left">
-      <strong>📋 Sur Firebase Console (nouvel onglet) :</strong><br>
-      1. Connectez-vous avec <strong>{gmail}</strong> si demandé<br>
-      2. Cliquez <strong>"Créer un projet"</strong><br>
-      3. Entrez le nom de votre structure → <strong>"Continuer"</strong><br>
-      4. <strong>Désactivez</strong> le toggle <strong>"Gemini/IA"</strong> si présent → <strong>"Continuer"</strong><br>
-      5. <strong>Désactivez</strong> le toggle <strong>"Google Analytics"</strong> → <strong>"Créer le projet"</strong><br>
-      6. Attendez <strong>"Votre nouveau projet est prêt"</strong> → <strong>"Continuer"</strong><br>
-      7. Revenez sur cet onglet et cliquez le bouton vert ci-dessous
-    </div>
-
-    <button class="btn-done" onclick="validerProjet()">
-      ✅ J'ai créé mon projet Firebase
-    </button>
-
-    <div id="msg" style="color:#888;font-size:13px;margin-top:12px"></div>
   </div>
 <script>
-var TOKEN = "{token}";
-var BASE = "/setup/" + TOKEN;
-
-function validerProjet() {{
-  document.getElementById("msg").textContent = "Recherche de votre projet...";
-  var btn = document.querySelector(".btn-done");
-  btn.disabled = true;
-  btn.textContent = "⏳ Recherche en cours...";
-
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", BASE + "/create", true);
-  xhr.onreadystatechange = function() {{
-    if (xhr.readyState !== 4) return;
-    if (xhr.status === 200) {{
-      window.location.href = BASE + "/configure";
-    }} else {{
-      try {{
-        var d = JSON.parse(xhr.responseText);
-        document.getElementById("msg").textContent = "❌ " + (d.error || "Erreur");
-      }} catch(e) {{
-        document.getElementById("msg").textContent = "❌ Erreur inattendue";
-      }}
-      btn.disabled = false;
-      btn.textContent = "✅ J'ai créé mon projet Firebase";
-    }}
+  window.onload = function() {{
+    setTimeout(function() {{
+      window.location.href = "{deep_link}";
+    }}, 1500);
   }};
-  xhr.send();
-}}
 </script>
 </body>
 </html>"""
@@ -1712,8 +1699,20 @@ def setup_create_firebase(token):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-    # Sauvegarder le token pour la configuration ultérieure
+    # Sauvegarder le token et lancer la configuration en arrière-plan
     sauvegarder_setup(token, {**session, "token_data": token_data, "status": "listing"})
+
+    # Lancer configure-firebase automatiquement en background
+    def lancer_configuration():
+        with app.app_context():
+            try:
+                # Appel interne à configure_firebase
+                _configure_firebase_logic(token, {**session, "token_data": token_data, "status": "listing"})
+            except Exception as e:
+                import traceback
+                print(f"[CONFIGURE BG] Erreur: {traceback.format_exc()}")
+
+    threading.Thread(target=lancer_configuration, daemon=True).start()
 
     return jsonify({"success": True, "status": "listing"})
 
@@ -2155,28 +2154,10 @@ def get_credentials(token):
 
 
 
-@app.route("/setup/<token>/configure-firebase", methods=["POST"])
-def configure_firebase(token):
-    """
-    Configure le projet Firebase de l'utilisateur :
-    1. Liste ses projets Firebase via API
-    2. Prend le plus récent
-    3. Enregistre l'app Android (com.managerpresence)
-    4. Active Firestore en europe-west9
-    5. Configure les règles de sécurité basiques
-    """
-    session = charger_setup(token)
-    if not session:
-        return jsonify({"error": "Session invalide"}), 404
-
-    if session.get("status") in ("firebase_done", "complete"):
-        return jsonify({"success": True})
-
-    token_data = session.get("token_data", {})
-    if not token_data:
-        return jsonify({"error": "Token OAuth manquant"}), 400
-
+def _configure_firebase_logic(token, session):
+    """Logique de configuration Firebase — appelable en background."""
     club_name = session.get("club_name", "")
+    token_data = session.get("token_data", {})
 
     try:
         from google.oauth2.credentials import Credentials
@@ -2193,7 +2174,6 @@ def configure_firebase(token):
 
         sauvegarder_setup(token, {**session, "status": "listing"})
 
-        # 1. Lister les projets Firebase disponibles
         firebase_svc = build("firebase", "v1beta1", credentials=creds)
         projects_resp = firebase_svc.projects().list().execute()
         projects = projects_resp.get("results", [])
@@ -2201,71 +2181,57 @@ def configure_firebase(token):
         if not projects:
             sauvegarder_setup(token, {**session, "status": "error",
                 "error": "Aucun projet Firebase trouvé. Avez-vous bien créé un projet ?"})
-            return jsonify({"error": "Aucun projet Firebase trouvé"}), 404
+            return
 
-        # Prendre le projet le plus récent (dernier de la liste)
-        projet = projects[-1]
+        # Trier par date de création — prendre le plus récent
+        def get_create_time(p):
+            return p.get("createTime", "") or ""
+        projects_sorted = sorted(projects, key=get_create_time, reverse=True)
+        projet = projects_sorted[0]
         project_id = projet.get("projectId", "")
-        print(f"[CONFIGURE] Projet trouvé: {project_id}")
+        print(f"[CONFIGURE] Projet le plus récent: {project_id}")
 
-        sauvegarder_setup(token, {**session, "status": "configuring",
-            "project_id": project_id})
+        sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
 
-        # 2. Enregistrer l'app Android
+        # Enregistrer l'app Android
         app_id = ""
         try:
-            # Vérifier si l'app existe déjà
             apps_resp = firebase_svc.projects().androidApps().list(
                 parent=f"projects/{project_id}"
             ).execute()
-            existing_apps = apps_resp.get("apps", [])
-
-            mp_app = next((a for a in existing_apps
-                          if a.get("packageName") == "com.managerpresence"), None)
-
+            existing = apps_resp.get("apps", [])
+            mp_app = next((a for a in existing if a.get("packageName") == "com.managerpresence"), None)
             if mp_app:
                 app_id = mp_app.get("appId", "")
-                print(f"[CONFIGURE] App Android existante: {app_id}")
             else:
-                create_resp = firebase_svc.projects().androidApps().create(
+                firebase_svc.projects().androidApps().create(
                     parent=f"projects/{project_id}",
-                    body={
-                        "packageName": "com.managerpresence",
-                        "displayName": club_name
-                    }
+                    body={"packageName": "com.managerpresence", "displayName": club_name}
                 ).execute()
                 time.sleep(5)
-                # Relister pour récupérer l'appId
-                apps_resp2 = firebase_svc.projects().androidApps().list(
+                apps2 = firebase_svc.projects().androidApps().list(
                     parent=f"projects/{project_id}"
-                ).execute()
-                apps2 = apps_resp2.get("apps", [])
-                mp_app2 = next((a for a in apps2
-                               if a.get("packageName") == "com.managerpresence"), None)
-                app_id = mp_app2.get("appId", "") if mp_app2 else ""
-                print(f"[CONFIGURE] App Android créée: {app_id}")
+                ).execute().get("apps", [])
+                mp2 = next((a for a in apps2 if a.get("packageName") == "com.managerpresence"), None)
+                app_id = mp2.get("appId", "") if mp2 else ""
         except Exception as e:
-            print(f"[CONFIGURE] Erreur app Android: {e}")
+            print(f"[CONFIGURE] App Android: {e}")
 
-        # 3. Activer Firestore en europe-west9
+        # Activer Firestore
         sauvegarder_setup(token, {**session, "status": "firestore",
             "project_id": project_id, "app_id": app_id})
         try:
             fs_svc = build("firestore", "v1", credentials=creds)
             fs_svc.projects().databases().create(
                 parent=f"projects/{project_id}",
-                body={
-                    "type": "FIRESTORE_NATIVE",
-                    "locationId": "europe-west9"
-                },
+                body={"type": "FIRESTORE_NATIVE", "locationId": "europe-west9"},
                 databaseId="(default)"
             ).execute()
-            print(f"[CONFIGURE] Firestore activé: {project_id}")
             time.sleep(4)
         except Exception as e:
-            print(f"[CONFIGURE] Firestore (déjà actif ou erreur): {e}")
+            print(f"[CONFIGURE] Firestore: {e}")
 
-        # 4. Récupérer l'API key
+        # Récupérer API key
         sauvegarder_setup(token, {**session, "status": "rules",
             "project_id": project_id, "app_id": app_id})
         api_key = ""
@@ -2275,15 +2241,14 @@ def configure_firebase(token):
                 parent=f"projects/{project_id}/locations/global"
             ).execute()
             if keys_resp.get("keys"):
-                key_name = keys_resp["keys"][0]["name"]
                 key_detail = keys_svc.projects().locations().keys().getKeyString(
-                    name=key_name
+                    name=keys_resp["keys"][0]["name"]
                 ).execute()
                 api_key = key_detail.get("keyString", "")
         except Exception as e:
             print(f"[CONFIGURE] API key: {e}")
 
-        # 5. Finaliser
+        # Créer licence trial
         licence = creer_licence_trial(project_id, club_name)
         sauvegarder_licence(project_id, licence)
 
@@ -2294,15 +2259,33 @@ def configure_firebase(token):
             "app_id":     app_id,
             "api_key":    api_key,
         })
-
-        print(f"[CONFIGURE] Terminé — project_id={project_id}, app_id={app_id}")
-        return jsonify({"success": True, "project_id": project_id})
+        print(f"[CONFIGURE] ✅ Terminé — project_id={project_id}")
 
     except Exception as e:
         import traceback
         print(f"[CONFIGURE] Erreur: {traceback.format_exc()}")
         sauvegarder_setup(token, {**session, "status": "error", "error": str(e)})
-        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/setup/<token>/configure-firebase", methods=["POST"])
+def configure_firebase(token):
+    """Configure le projet Firebase — délègue à _configure_firebase_logic."""
+    session = charger_setup(token)
+    if not session:
+        return jsonify({"error": "Session invalide"}), 404
+    if session.get("status") in ("firebase_done", "complete"):
+        return jsonify({"success": True})
+    token_data = session.get("token_data", {})
+    if not token_data:
+        return jsonify({"error": "Token OAuth manquant"}), 400
+
+    threading.Thread(
+        target=_configure_firebase_logic,
+        args=(token, session),
+        daemon=True
+    ).start()
+
+    return jsonify({"success": True, "status": "configuring"})
 
 # ============================================================
 # ROUTES LÉGALES — Politique de confidentialité & CGU
