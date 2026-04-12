@@ -2287,6 +2287,30 @@ def configure_firebase(token):
 
     return jsonify({"success": True, "status": "configuring"})
 
+
+@app.route("/resend-setup-email", methods=["POST"])
+def resend_setup_email():
+    """Renvoie l'email de setup si l'utilisateur ne l'a pas reçu."""
+    data = request.get_json() or {}
+    token = data.get("token", "")
+    if not token:
+        return jsonify({"error": "Token manquant"}), 400
+
+    session = charger_setup(token)
+    if not session:
+        return jsonify({"error": "Session invalide ou expirée"}), 404
+
+    gmail = session.get("gmail", "")
+    club_name = session.get("club_name", "")
+    setup_url = f"{SERVER_BASE_URL}/setup/{token}"
+
+    def envoyer():
+        envoyer_email_setup(gmail, club_name, setup_url)
+
+    threading.Thread(target=envoyer, daemon=True).start()
+    print(f"[RESEND] Email renvoyé à {gmail}")
+    return jsonify({"success": True, "message": f"Email renvoyé à {gmail}"})
+
 # ============================================================
 # ROUTES LÉGALES — Politique de confidentialité & CGU
 # ============================================================
