@@ -1173,7 +1173,7 @@ def envoyer_email_setup(gmail, club_name, setup_url):
 
         import urllib.request
         payload = json.dumps({
-            "sender": {"name": "ManagerPresence", "email": "managerpresence@smtp-brevo.com"},
+            "sender": {"name": "ManagerPresence", "email": "cp.support.dev@gmail.com"},
             "to": [{"email": gmail}],
             "subject": f"Créez votre espace {club_name} — ManagerPresence",
             "htmlContent": html
@@ -1239,7 +1239,7 @@ def envoyer_email_confirmation(gmail, club_name, su_password):
 </body></html>"""
         import urllib.request
         payload = json.dumps({
-            "sender": {"name": "ManagerPresence", "email": "managerpresence@smtp-brevo.com"},
+            "sender": {"name": "ManagerPresence", "email": "cp.support.dev@gmail.com"},
             "to": [{"email": gmail}],
             "subject": f"✅ Votre espace {club_name} est opérationnel !",
             "htmlContent": html
@@ -1491,6 +1491,27 @@ def setup_page(token):
       Votre espace sera créé sur <strong>votre propre compte Google</strong>.<br>
       Nous n'avons accès à aucune de vos données.
     </p>
+    <div style="background:#E8F5E9;border-radius:8px;padding:14px;margin-bottom:16px;text-align:left;font-size:13px;color:#2E7D32">
+      <strong>✅ Ce que nous utilisons :</strong><br>
+      • Votre email pour créer votre espace Firebase<br>
+      • Les droits pour configurer votre projet Google Cloud<br><br>
+      <strong>❌ Ce que nous ne faisons PAS :</strong><br>
+      • Nous ne lisons pas vos emails ni vos contacts<br>
+      • Nous ne stockons pas votre token Google<br>
+      • Nous ne revendons aucune donnée<br><br>
+      L'accès OAuth est utilisé <strong>une seule fois</strong> lors de la création,
+      puis révocable depuis votre compte Google à tout moment.<br><br>
+      <a href="/privacy" target="_blank" style="color:#1565C0">📄 Politique de confidentialité complète</a>
+    </div>
+
+    <p style="color:#555;font-size:13px;margin-bottom:12px">
+      Sur l'écran suivant, Google vous demandera d'autoriser ces deux accès — cochez les deux :
+    </p>
+    <div style="background:#FFF9C4;border-radius:8px;padding:12px;margin-bottom:16px;font-size:13px;color:#333;text-align:left">
+      🔥 <strong>Afficher et administrer Firebase</strong> — pour créer votre projet<br>
+      ☁️ <strong>Voir et configurer Google Cloud</strong> — pour activer Firestore
+    </div>
+
     <a class="btn" href="/setup/{token}/oauth">
       <svg width="20" height="20" viewBox="0 0 24 24">
         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
