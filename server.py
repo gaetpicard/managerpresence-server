@@ -1173,7 +1173,7 @@ def envoyer_email_setup(gmail, club_name, setup_url):
 
         import urllib.request
         payload = json.dumps({
-            "sender": {"name": "ManagerPresence", "email": "cp.support.dev@gmail.com"},
+            "sender": {"name": "ManagerPresence", "email": "managerpresence@smtp-brevo.com"},
             "to": [{"email": gmail}],
             "subject": f"Créez votre espace {club_name} — ManagerPresence",
             "htmlContent": html
@@ -1239,7 +1239,7 @@ def envoyer_email_confirmation(gmail, club_name, su_password):
 </body></html>"""
         import urllib.request
         payload = json.dumps({
-            "sender": {"name": "ManagerPresence", "email": "cp.support.dev@gmail.com"},
+            "sender": {"name": "ManagerPresence", "email": "managerpresence@smtp-brevo.com"},
             "to": [{"email": gmail}],
             "subject": f"✅ Votre espace {club_name} est opérationnel !",
             "htmlContent": html
@@ -1549,7 +1549,7 @@ def setup_oauth_callback():
     if not session:
         return "<html><body>Session invalide ou expirée.</body></html>", 404
 
-    sauvegarder_setup(token, {{**session, "oauth_code": code, "status": "oauth_done"}})
+    sauvegarder_setup(token, {**session, "oauth_code": code, "status": "oauth_done"})
     club_name = session.get("club_name", "")
 
     return f"""<!DOCTYPE html>
@@ -1570,7 +1570,7 @@ def setup_oauth_callback():
   </style>
   <script>
     async function lancer() {{
-      await fetch('/setup/{token}/create', {{method:'POST'}});
+      await fetch('/setup/{token}/create', {{method:'POST'});
       poll();
     }}
     async function poll() {{
@@ -1609,15 +1609,15 @@ def setup_create_firebase(token):
     """Étape 5 : Crée le projet Firebase (appelé par le JS de la page callback)."""
     session = charger_setup(token)
     if not session:
-        return jsonify({{"error": "Session invalide"}}), 404
+        return jsonify({"error": "Session invalide"}), 404
 
     status = session.get("status", "")
     if status in ("firebase_done", "complete"):
-        return jsonify({{"success": True, "status": status}})
+        return jsonify({"success": True, "status": status})
 
     oauth_code = session.get("oauth_code", "")
     if not oauth_code:
-        return jsonify({{"error": "Code OAuth manquant"}}), 400
+        return jsonify({"error": "Code OAuth manquant"}), 400
 
     # Échanger le code OAuth contre un access_token
     try:
@@ -1627,40 +1627,40 @@ def setup_create_firebase(token):
             "client_secret": GOOGLE_CLIENT_SECRET,
             "redirect_uri":  f"{{SERVER_BASE_URL}}/setup/oauth/callback",
             "grant_type":    "authorization_code"
-        }})
+        })
         token_data = token_resp.json()
         if "error" in token_data:
             err = token_data.get("error_description", "OAuth error")
-            sauvegarder_setup(token, {{**session, "status": "error", "error": err}})
-            return jsonify({{"error": err}}), 400
+            sauvegarder_setup(token, {**session, "status": "error", "error": err})
+            return jsonify({"error": err}), 400
     except Exception as e:
-        sauvegarder_setup(token, {{**session, "status": "error", "error": str(e)}})
-        return jsonify({{"error": str(e)}}), 500
+        sauvegarder_setup(token, {**session, "status": "error", "error": str(e)})
+        return jsonify({"error": str(e)}), 500
 
     club_name = session.get("club_name", "")
     gmail     = session.get("gmail", "")
-    sauvegarder_setup(token, {{**session, "status": "creating"}})
+    sauvegarder_setup(token, {**session, "status": "creating"})
 
     result = creer_projet_firebase(token_data, club_name, gmail)
 
     if not result:
         sauvegarder_setup(token, {{**session, "status": "error",
-                                   "error": "Échec création projet Firebase"}})
-        return jsonify({{"error": "Échec création Firebase"}}), 500
+                                   "error": "Échec création projet Firebase"})
+        return jsonify({"error": "Échec création Firebase"}), 500
 
     # Créer la licence trial
     licence = creer_licence_trial(result["project_id"], club_name)
     sauvegarder_licence(result["project_id"], licence)
 
-    sauvegarder_setup(token, {{
+    sauvegarder_setup(token, {
         **session,
         "status":     "firebase_done",
         "project_id": result["project_id"],
         "app_id":     result["app_id"],
         "api_key":    result["api_key"],
-    }})
+    })
 
-    return jsonify({{"success": True, "status": "firebase_done"}})
+    return jsonify({"success": True, "status": "firebase_done"})
 
 
 @app.route("/setup/<token>/status", methods=["GET"])
@@ -1668,7 +1668,7 @@ def setup_status(token):
     """Poll du statut de création."""
     session = charger_setup(token)
     if not session:
-        return jsonify({{"status": "error", "error": "Session invalide"}})
+        return jsonify({"status": "error", "error": "Session invalide"})
 
     status   = session.get("status", "pending")
     messages = {{
@@ -1679,11 +1679,11 @@ def setup_status(token):
         "complete":      "Votre espace est prêt !",
         "error":         session.get("error", "Erreur inconnue")
     }}
-    return jsonify({{
+    return jsonify({
         "status":  status,
         "message": messages.get(status, status),
         "error":   session.get("error") if status == "error" else None
-    }})
+    })
 
 
 @app.route("/setup/<token>/done", methods=["GET"])
@@ -1762,8 +1762,8 @@ def setup_done_page(token):
       const r = await fetch('/setup/{token}/finalize', {{
         method: 'POST',
         headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{su_password: pwd}})
-      }});
+        body: JSON.stringify({{su_password: pwd})
+      });
       const d = await r.json();
       if (d.success) {{
         msg.textContent = '✅ Vérifiez votre email !'; msg.className = 'ok';
@@ -1877,6 +1877,161 @@ def get_credentials(token):
         "su_password_hash": session.get("su_password_hash", ""),
         "club_name":        session.get("club_name", ""),
     })
+
+
+# ============================================================
+# ROUTES LÉGALES — Politique de confidentialité & CGU
+# ============================================================
+
+@app.route("/privacy", methods=["GET"])
+def privacy_policy():
+    """Politique de confidentialité — requise pour validation OAuth Google"""
+    return """<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Politique de confidentialité — ManagerPresence</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto;
+           padding: 40px 20px; color: #333; line-height: 1.7; }
+    h1 { color: #1565C0; border-bottom: 2px solid #1565C0; padding-bottom: 12px; }
+    h2 { color: #1565C0; margin-top: 32px; }
+    .date { color: #888; font-size: 14px; margin-bottom: 32px; }
+    a { color: #1565C0; }
+    .card { background: #F5F5F5; border-radius: 8px; padding: 16px; margin: 16px 0; }
+  </style>
+</head>
+<body>
+  <h1>🏔️ ManagerPresence<br>Politique de confidentialité</h1>
+  <p class="date">Dernière mise à jour : 12 avril 2026</p>
+
+  <h2>1. Présentation</h2>
+  <p>ManagerPresence est une application Android de gestion des présences destinée
+  aux structures (clubs, écoles, entreprises). Elle est développée et maintenue par
+  Gaëtan Picard (gaetpicard@gmail.com).</p>
+
+  <h2>2. Données collectées</h2>
+  <p>Lors de la création d'un espace, nous collectons :</p>
+  <ul>
+    <li><strong>Adresse email Google (Gmail)</strong> — pour vous identifier et vous envoyer
+    les informations de connexion</li>
+    <li><strong>Nom de la structure</strong> — pour personnaliser votre espace</li>
+  </ul>
+  <p>Les données de votre structure (membres, présences, séances) sont hébergées dans
+  votre propre projet Firebase, créé sur votre compte Google. Nous n'avons aucun accès
+  à ces données.</p>
+
+  <h2>3. Utilisation de Google OAuth</h2>
+  <p>ManagerPresence utilise Google OAuth uniquement pour :</p>
+  <ul>
+    <li>Vous authentifier de manière sécurisée</li>
+    <li>Créer un projet Firebase sur votre compte Google Cloud</li>
+    <li>Configurer automatiquement votre base de données Firestore</li>
+  </ul>
+  <div class="card">
+    <strong>Important :</strong> Nous ne stockons pas votre token Google.
+    L'accès OAuth est utilisé une seule fois lors de la création de votre espace,
+    puis les permissions sont révocables depuis votre compte Google à tout moment.
+  </div>
+
+  <h2>4. Hébergement des données</h2>
+  <ul>
+    <li>Votre projet Firebase est hébergé en <strong>France (europe-west9 — Paris)</strong></li>
+    <li>Les sessions de création sont temporaires (24h) et supprimées automatiquement</li>
+    <li>Aucune donnée personnelle n'est revendue ou partagée avec des tiers</li>
+  </ul>
+
+  <h2>5. Vos droits</h2>
+  <p>Conformément au RGPD, vous disposez des droits suivants :</p>
+  <ul>
+    <li><strong>Droit d'accès</strong> — vous pouvez consulter vos données depuis l'application</li>
+    <li><strong>Droit de suppression</strong> — vous pouvez supprimer votre espace depuis
+    Paramètres → Mon Club → Supprimer ma structure</li>
+    <li><strong>Droit de portabilité</strong> — vos données peuvent être exportées
+    depuis l'application</li>
+  </ul>
+
+  <h2>6. Cookies et traceurs</h2>
+  <p>ManagerPresence n'utilise aucun cookie de tracking ou publicitaire.
+  Les seules données temporaires stockées sont nécessaires au fonctionnement
+  de l'application (session de création, token d'authentification).</p>
+
+  <h2>7. Sécurité</h2>
+  <ul>
+    <li>Communications chiffrées en HTTPS</li>
+    <li>Mots de passe Super Utilisateur hashés en SHA-256</li>
+    <li>Règles de sécurité Firestore configurées par structure</li>
+  </ul>
+
+  <h2>8. Contact</h2>
+  <p>Pour toute question relative à vos données personnelles :</p>
+  <div class="card">
+    📧 <a href="mailto:gaetpicard@gmail.com">gaetpicard@gmail.com</a><br>
+    🏔️ ManagerPresence — Application de gestion des présences
+  </div>
+
+  <hr style="margin-top: 40px; border: none; border-top: 1px solid #eee;">
+  <p style="color: #aaa; font-size: 12px; text-align: center;">
+    ManagerPresence © 2026 — Données hébergées en France (Firebase europe-west9)
+  </p>
+</body>
+</html>"""
+
+
+@app.route("/cgu", methods=["GET"])
+def cgu():
+    """Conditions Générales d'Utilisation"""
+    return """<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CGU — ManagerPresence</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto;
+           padding: 40px 20px; color: #333; line-height: 1.7; }
+    h1 { color: #1565C0; border-bottom: 2px solid #1565C0; padding-bottom: 12px; }
+    h2 { color: #1565C0; margin-top: 32px; }
+    .date { color: #888; font-size: 14px; margin-bottom: 32px; }
+  </style>
+</head>
+<body>
+  <h1>🏔️ ManagerPresence<br>Conditions Générales d'Utilisation</h1>
+  <p class="date">Dernière mise à jour : 12 avril 2026</p>
+
+  <h2>1. Objet</h2>
+  <p>Les présentes CGU régissent l'utilisation de l'application ManagerPresence,
+  logiciel de gestion des présences destiné aux structures associatives,
+  éducatives et professionnelles.</p>
+
+  <h2>2. Accès au service</h2>
+  <p>L'accès à ManagerPresence nécessite un compte Google. En créant un espace,
+  vous acceptez que votre adresse Gmail soit utilisée pour la création et la gestion
+  de votre espace Firebase.</p>
+
+  <h2>3. Responsabilités</h2>
+  <p>En tant qu'administrateur d'une structure, vous êtes responsable de traitement
+  au sens du RGPD pour les données de vos membres et employés. ManagerPresence
+  agit en qualité de sous-traitant technique.</p>
+
+  <h2>4. Disponibilité</h2>
+  <p>ManagerPresence est fourni "en l'état". Nous nous efforçons d'assurer
+  une disponibilité maximale mais ne garantissons pas une disponibilité ininterrompue.</p>
+
+  <h2>5. Résiliation</h2>
+  <p>Vous pouvez supprimer votre espace à tout moment depuis Paramètres → Mon Club
+  → Supprimer ma structure. Cette action est irréversible et supprime toutes vos données.</p>
+
+  <h2>6. Contact</h2>
+  <p>📧 <a href="mailto:gaetpicard@gmail.com">gaetpicard@gmail.com</a></p>
+
+  <hr style="margin-top: 40px; border: none; border-top: 1px solid #eee;">
+  <p style="color: #aaa; font-size: 12px; text-align: center;">
+    ManagerPresence © 2026
+  </p>
+</body>
+</html>"""
 
 # ============================================================
 # DÉMARRAGE
