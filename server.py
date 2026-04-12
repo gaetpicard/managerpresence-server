@@ -1602,111 +1602,6 @@ def setup_oauth_callback():
                 padding:10px 20px;font-size:14px;cursor:pointer;margin-top:12px;
                 display:none}}
   </style>
-  <script>
-    const STEPS = [
-      {{id:'pending',       icon:'⏳', label:'Initialisation...'}},
-      {{id:'oauth_done',    icon:'🔐', label:'Authentification Google réussie'}},
-      {{id:'creating',      icon:'🔧', label:'Création du projet Firebase'}},
-      {{id:'firebase_done', icon:'🔥', label:'Firebase configuré'}},
-      {{id:'complete',      icon:'✅', label:'Votre espace est prêt !'}},
-    ];
-    const PROGRESS = {{
-      pending: 10, oauth_done: 25, creating: 50, firebase_done: 85, complete: 100
-    }};
-    let startTime = Date.now();
-    let pollTimer = null;
-    let launched = false;
-
-    function renderSteps(currentStatus) {{
-      const order = ['pending','oauth_done','creating','firebase_done','complete'];
-      const currentIdx = order.indexOf(currentStatus);
-      let html = '';
-      STEPS.forEach((step, i) => {{
-        let cls = 'step';
-        let icon = step.icon;
-        if (i < currentIdx) {{ cls += ' done'; icon = '✅'; }}
-        else if (i === currentIdx) {{ cls += ' active'; }}
-        html += `<div class="${{cls}}"><span class="step-icon">${{icon}}</span>${{step.label}}</div>`;
-      }});
-      document.getElementById('steps').innerHTML = html;
-    }}
-
-    // Points du chemin de l'alpiniste (x,y) pour 0% à 100%
-    const PATH = [
-      [75,163],[88,155],[103,145],[118,133],[135,120],
-      [150,108],[162,94],[173,78],[183,62],[192,46],[203,30]
-    ];
-    function setProgress(pct) {{
-      // Interpoler la position de l'alpiniste sur le chemin
-      const idx = Math.min(Math.floor(pct / 10), PATH.length - 1);
-      const [x, y] = PATH[idx];
-      document.getElementById('climber').setAttribute('transform', `translate(${{x}},${{y}})`);
-      document.getElementById('pct-text').textContent = pct + '%';
-      if (pct >= 100) {{
-        document.getElementById('flag').setAttribute('opacity', '1');
-      }}
-    }}
-
-    function showError(msg) {{
-      document.querySelector('.spinner').style.display = 'none';
-      document.getElementById('title').textContent = 'Une erreur est survenue';
-      document.getElementById('title').style.color = '#C62828';
-      const eb = document.getElementById('error-box');
-      eb.style.display = 'block';
-      eb.innerHTML = '❌ ' + (msg || 'Erreur inconnue') + '<br><br>' +
-        '<strong>Que faire ?</strong><br>' +
-        '• Vérifiez que la facturation est activée sur votre compte Google Cloud<br>' +
-        '• Retournez dans l'application et réessayez<br>' +
-        '• Si le problème persiste, contactez le support';
-      document.getElementById('retry-btn').style.display = 'inline-block';
-    }}
-
-    function checkTimeout() {{
-      const elapsed = (Date.now() - startTime) / 1000;
-      if (elapsed > 360) {{
-        clearTimeout(pollTimer);
-        showError('La création a pris trop de temps. Veuillez réessayer.');
-      }}
-    }}
-
-    async function lancer() {{
-      if (launched) return;
-      launched = true;
-      // Lancer la création sans attendre (fire and forget)
-      // Le poll vérifiera le statut indépendamment
-      fetch('/setup/{token}/create', {{method:'POST'}}).catch(() => {{}});
-      // Démarrer le poll après 2 secondes
-      setTimeout(poll, 2000);
-    }}
-
-    async function poll() {{
-      checkTimeout();
-      try {{
-        const r = await fetch('/setup/{token}/status');
-        const d = await r.json();
-        const status = d.status || 'pending';
-        const pct = PROGRESS[status] || 10;
-
-        setProgress(pct);
-        renderSteps(status);
-        document.getElementById('msg').textContent = d.message || '';
-
-        if (status === 'complete') {{
-          setTimeout(() => {{ window.location.href = '/setup/{token}/done'; }}, 800);
-        }} else if (status === 'error') {{
-          showError(d.error);
-        }} else {{
-          pollTimer = setTimeout(poll, 3000);
-        }}
-      }} catch(e) {{
-        document.getElementById('msg').textContent = 'Connexion en cours...';
-        pollTimer = setTimeout(poll, 5000);
-      }}
-    }}
-
-    // Démarrer immédiatement
-    lancer();
-  </script>
 </head>
 <body>
   <div class="card">
@@ -1842,6 +1737,111 @@ def setup_oauth_callback():
       ← Retour à l'application
     </button>
   </div>
+  <script>
+    const STEPS = [
+      {{id:'pending',       icon:'⏳', label:'Initialisation...'}},
+      {{id:'oauth_done',    icon:'🔐', label:'Authentification Google réussie'}},
+      {{id:'creating',      icon:'🔧', label:'Création du projet Firebase'}},
+      {{id:'firebase_done', icon:'🔥', label:'Firebase configuré'}},
+      {{id:'complete',      icon:'✅', label:'Votre espace est prêt !'}},
+    ];
+    const PROGRESS = {{
+      pending: 10, oauth_done: 25, creating: 50, firebase_done: 85, complete: 100
+    }};
+    let startTime = Date.now();
+    let pollTimer = null;
+    let launched = false;
+
+    function renderSteps(currentStatus) {{
+      const order = ['pending','oauth_done','creating','firebase_done','complete'];
+      const currentIdx = order.indexOf(currentStatus);
+      let html = '';
+      STEPS.forEach((step, i) => {{
+        let cls = 'step';
+        let icon = step.icon;
+        if (i < currentIdx) {{ cls += ' done'; icon = '✅'; }}
+        else if (i === currentIdx) {{ cls += ' active'; }}
+        html += `<div class="${{cls}}"><span class="step-icon">${{icon}}</span>${{step.label}}</div>`;
+      }});
+      document.getElementById('steps').innerHTML = html;
+    }}
+
+    // Points du chemin de l'alpiniste (x,y) pour 0% à 100%
+    const PATH = [
+      [75,163],[88,155],[103,145],[118,133],[135,120],
+      [150,108],[162,94],[173,78],[183,62],[192,46],[203,30]
+    ];
+    function setProgress(pct) {{
+      // Interpoler la position de l'alpiniste sur le chemin
+      const idx = Math.min(Math.floor(pct / 10), PATH.length - 1);
+      const [x, y] = PATH[idx];
+      document.getElementById('climber').setAttribute('transform', `translate(${{x}},${{y}})`);
+      document.getElementById('pct-text').textContent = pct + '%';
+      if (pct >= 100) {{
+        document.getElementById('flag').setAttribute('opacity', '1');
+      }}
+    }}
+
+    function showError(msg) {{
+      document.querySelector('.spinner').style.display = 'none';
+      document.getElementById('title').textContent = 'Une erreur est survenue';
+      document.getElementById('title').style.color = '#C62828';
+      const eb = document.getElementById('error-box');
+      eb.style.display = 'block';
+      eb.innerHTML = '❌ ' + (msg || 'Erreur inconnue') + '<br><br>' +
+        '<strong>Que faire ?</strong><br>' +
+        '• Vérifiez que la facturation est activée sur votre compte Google Cloud<br>' +
+        '• Retournez dans l'application et réessayez<br>' +
+        '• Si le problème persiste, contactez le support';
+      document.getElementById('retry-btn').style.display = 'inline-block';
+    }}
+
+    function checkTimeout() {{
+      const elapsed = (Date.now() - startTime) / 1000;
+      if (elapsed > 360) {{
+        clearTimeout(pollTimer);
+        showError('La création a pris trop de temps. Veuillez réessayer.');
+      }}
+    }}
+
+    async function lancer() {{
+      if (launched) return;
+      launched = true;
+      // Lancer la création sans attendre (fire and forget)
+      // Le poll vérifiera le statut indépendamment
+      fetch('/setup/{token}/create', {{method:'POST'}}).catch(() => {{}});
+      // Démarrer le poll après 2 secondes
+      setTimeout(poll, 2000);
+    }}
+
+    async function poll() {{
+      checkTimeout();
+      try {{
+        const r = await fetch('/setup/{token}/status');
+        const d = await r.json();
+        const status = d.status || 'pending';
+        const pct = PROGRESS[status] || 10;
+
+        setProgress(pct);
+        renderSteps(status);
+        document.getElementById('msg').textContent = d.message || '';
+
+        if (status === 'complete') {{
+          setTimeout(() => {{ window.location.href = '/setup/{token}/done'; }}, 800);
+        }} else if (status === 'error') {{
+          showError(d.error);
+        }} else {{
+          pollTimer = setTimeout(poll, 3000);
+        }}
+      }} catch(e) {{
+        document.getElementById('msg').textContent = 'Connexion en cours...';
+        pollTimer = setTimeout(poll, 5000);
+      }}
+    }}
+
+    // Démarrer immédiatement
+    lancer();
+  </script>
 </body>
 </html>"""
 
