@@ -1580,46 +1580,200 @@ def setup_oauth_callback():
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Création en cours — ManagerPresence</title>
   <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
     body{{font-family:Arial;background:#F5F5F5;min-height:100vh;
          display:flex;align-items:center;justify-content:center;padding:20px}}
-    .card{{background:white;border-radius:16px;padding:40px;
-           max-width:400px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}}
-    .spinner{{width:48px;height:48px;border:4px solid #E3F2FD;
+    .card{{background:white;border-radius:16px;padding:32px 24px;
+           max-width:420px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}}
+    .spinner{{width:40px;height:40px;border:4px solid #E3F2FD;
               border-top:4px solid #1565C0;border-radius:50%;
-              animation:spin 1s linear infinite;margin:20px auto}}
+              animation:spin 1s linear infinite;margin:16px auto}}
     @keyframes spin{{to{{transform:rotate(360deg)}}}}
+    .step{{display:flex;align-items:center;gap:10px;padding:8px 12px;
+           border-radius:8px;margin:4px 0;font-size:13px;text-align:left;
+           background:#F8F9FA;color:#888;transition:all 0.3s}}
+    .step.active{{background:#E3F2FD;color:#1565C0;font-weight:bold}}
+    .step.done{{background:#E8F5E9;color:#2E7D32}}
+    .step.error{{background:#FFEBEE;color:#C62828}}
+    .step-icon{{font-size:16px;min-width:24px;text-align:center}}
+    .error-box{{background:#FFEBEE;border-radius:8px;padding:16px;margin-top:16px;
+                color:#C62828;font-size:13px;display:none}}
+    .retry-btn{{background:#1565C0;color:white;border:none;border-radius:8px;
+                padding:10px 20px;font-size:14px;cursor:pointer;margin-top:12px;
+                display:none}}
   </style>
   <script>
-    async function lancer() {{
-      await fetch('/setup/{token}/create', {{method:'POST'}});
-      poll();
+    const STEPS = [
+      {{id:'pending',       icon:'⏳', label:'Initialisation...'}},
+      {{id:'oauth_done',    icon:'🔐', label:'Authentification Google réussie'}},
+      {{id:'creating',      icon:'🔧', label:'Création du projet Firebase'}},
+      {{id:'firebase_done', icon:'🔥', label:'Firebase configuré'}},
+      {{id:'complete',      icon:'✅', label:'Votre espace est prêt !'}},
+    ];
+    const PROGRESS = {{
+      pending: 10, oauth_done: 25, creating: 50, firebase_done: 85, complete: 100
+    }};
+    let startTime = Date.now();
+    let pollTimer = null;
+    let launched = false;
+
+    function renderSteps(currentStatus) {{
+      const order = ['pending','oauth_done','creating','firebase_done','complete'];
+      const currentIdx = order.indexOf(currentStatus);
+      let html = '';
+      STEPS.forEach((step, i) => {{
+        let cls = 'step';
+        let icon = step.icon;
+        if (i < currentIdx) {{ cls += ' done'; icon = '✅'; }}
+        else if (i === currentIdx) {{ cls += ' active'; }}
+        html += `<div class="${{cls}}"><span class="step-icon">${{icon}}</span>${{step.label}}</div>`;
+      }});
+      document.getElementById('steps').innerHTML = html;
     }}
-    async function poll() {{
-      const r = await fetch('/setup/{token}/status');
-      const d = await r.json();
-      document.getElementById('msg').textContent = d.message || '';
-      if (d.status === 'complete') {{
-        window.location.href = '/setup/{token}/done';
-      }} else if (d.status === 'error') {{
-        document.getElementById('msg').textContent = '❌ ' + (d.error || 'Erreur inconnue');
-        document.querySelector('.spinner').style.display = 'none';
-      }} else {{
-        setTimeout(poll, 3000);
+
+    // Points du chemin de l'alpiniste (x,y) pour 0% à 100%
+    const PATH = [
+      [90,148],[105,138],[120,128],[135,118],[150,108],
+      [162,96],[173,82],[183,65],[190,45],[196,25],[200,12]
+    ];
+    function setProgress(pct) {{
+      // Interpoler la position de l'alpiniste sur le chemin
+      const idx = Math.min(Math.floor(pct / 10), PATH.length - 1);
+      const [x, y] = PATH[idx];
+      document.getElementById('climber').setAttribute('transform', `translate(${{x}},${{y}})`);
+      document.getElementById('pct-text').textContent = pct + '%';
+      if (pct >= 100) {{
+        document.getElementById('flag').setAttribute('opacity', '1');
       }}
     }}
+
+    function showError(msg) {{
+      document.querySelector('.spinner').style.display = 'none';
+      document.getElementById('title').textContent = 'Une erreur est survenue';
+      document.getElementById('title').style.color = '#C62828';
+      const eb = document.getElementById('error-box');
+      eb.style.display = 'block';
+      eb.innerHTML = '❌ ' + (msg || 'Erreur inconnue') + '<br><br>' +
+        '<strong>Que faire ?</strong><br>' +
+        '• Vérifiez que la facturation est activée sur votre compte Google Cloud<br>' +
+        '• Retournez dans l'application et réessayez<br>' +
+        '• Si le problème persiste, contactez le support';
+      document.getElementById('retry-btn').style.display = 'inline-block';
+    }}
+
+    function checkTimeout() {{
+      const elapsed = (Date.now() - startTime) / 1000;
+      if (elapsed > 360) {{
+        clearTimeout(pollTimer);
+        showError('La création a pris trop de temps. Veuillez réessayer.');
+      }}
+    }}
+
+    async function lancer() {{
+      if (launched) return;
+      launched = true;
+      try {{
+        await fetch('/setup/{token}/create', {{method:'POST'}});
+      }} catch(e) {{}}
+      poll();
+    }}
+
+    async function poll() {{
+      checkTimeout();
+      try {{
+        const r = await fetch('/setup/{token}/status');
+        const d = await r.json();
+        const status = d.status || 'pending';
+        const pct = PROGRESS[status] || 10;
+
+        setProgress(pct);
+        renderSteps(status);
+        document.getElementById('msg').textContent = d.message || '';
+
+        if (status === 'complete') {{
+          setTimeout(() => {{ window.location.href = '/setup/{token}/done'; }}, 800);
+        }} else if (status === 'error') {{
+          showError(d.error);
+        }} else {{
+          pollTimer = setTimeout(poll, 3000);
+        }}
+      }} catch(e) {{
+        document.getElementById('msg').textContent = 'Connexion en cours...';
+        pollTimer = setTimeout(poll, 5000);
+      }}
+    }}
+
     window.onload = lancer;
   </script>
 </head>
 <body>
   <div class="card">
-    <div style="font-size:48px">🏔️</div>
-    <h2 style="color:#1565C0;margin:12px 0">Création en cours...</h2>
-    <p style="color:#555">Nous configurons <strong>{club_name}</strong></p>
-    <div class="spinner"></div>
-    <p style="color:#666;font-size:14px" id="msg">Initialisation du projet Firebase...</p>
-    <p style="color:#aaa;font-size:12px;margin-top:16px">
-      Cette opération prend 30 à 60 secondes.<br>Ne fermez pas cette page.
+    <div style="font-size:48px;margin-bottom:8px">🏔️</div>
+    <h2 id="title" style="color:#1565C0;margin-bottom:4px">Création en cours...</h2>
+    <p style="color:#555;font-size:14px;margin-bottom:12px">
+      Nous configurons <strong>{club_name}</strong>
     </p>
+
+    <!-- Montagne avec alpiniste -->
+    <div style="position:relative;margin:16px 0 8px 0">
+      <svg viewBox="0 0 400 160" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">
+        <!-- Ciel -->
+        <rect width="400" height="160" fill="#F0F4FF" rx="12"/>
+        <!-- Neige sommet -->
+        <polygon points="200,10 230,55 170,55" fill="white" stroke="#ddd" stroke-width="1"/>
+        <!-- Montagne principale -->
+        <polygon points="200,10 310,150 90,150" fill="#90A4AE"/>
+        <!-- Face gauche ombre -->
+        <polygon points="200,10 90,150 155,150" fill="#78909C"/>
+        <!-- Montagne droite fond -->
+        <polygon points="320,40 400,150 240,150" fill="#B0BEC5"/>
+        <!-- Montagne gauche fond -->
+        <polygon points="80,60 160,150 0,150" fill="#B0BEC5"/>
+        <!-- Sol -->
+        <rect x="0" y="148" width="400" height="12" fill="#8D6E63" rx="0"/>
+        <!-- Chemin de progression (ligne pointillée sur la montagne) -->
+        <path d="M 90,148 Q 130,120 160,100 Q 175,85 200,10"
+              fill="none" stroke="white" stroke-width="1.5"
+              stroke-dasharray="4,4" opacity="0.6"/>
+        <!-- Alpiniste (groupe positionné dynamiquement) -->
+        <g id="climber" transform="translate(90,148)">
+          <!-- Corps -->
+          <ellipse cx="0" cy="-8" rx="5" ry="7" fill="#E53935"/>
+          <!-- Tête -->
+          <circle cx="0" cy="-18" r="5" fill="#FFCC80"/>
+          <!-- Casque -->
+          <path d="M -5,-18 Q 0,-26 5,-18" fill="#1565C0" stroke="#1565C0" stroke-width="1"/>
+          <!-- Piolet -->
+          <line x1="6" y1="-14" x2="14" y2="-22" stroke="#555" stroke-width="1.5"/>
+          <line x1="11" y1="-22" x2="17" y2="-20" stroke="#555" stroke-width="1.5"/>
+          <!-- Jambes -->
+          <line x1="-2" y1="-2" x2="-4" y2="4" stroke="#333" stroke-width="2"/>
+          <line x1="2" y1="-2" x2="4" y2="4" stroke="#333" stroke-width="2"/>
+          <!-- Sac à dos -->
+          <rect x="-8" y="-15" width="5" height="8" fill="#1565C0" rx="1"/>
+        </g>
+        <!-- Drapeau au sommet (caché jusqu'à la fin) -->
+        <g id="flag" opacity="0">
+          <line x1="200" y1="10" x2="200" y2="-10" stroke="#333" stroke-width="1.5"/>
+          <polygon points="200,-10 215,-5 200,0" fill="#E53935"/>
+        </g>
+        <!-- Pourcentage -->
+        <text id="pct-text" x="200" y="142" text-anchor="middle"
+              font-size="11" fill="white" font-weight="bold" font-family="Arial">0%</text>
+      </svg>
+    </div>
+
+    <div id="steps" style="margin:8px 0"></div>
+    <p style="color:#666;font-size:13px;margin-top:8px" id="msg">Initialisation...</p>
+    <p style="color:#aaa;font-size:11px;margin-top:8px">
+      Cette opération prend 1 à 3 minutes.<br>Ne fermez pas cette page.
+    </p>
+
+    <div class="error-box" id="error-box"></div>
+    <button class="retry-btn" id="retry-btn"
+            onclick="window.history.back()">
+      ← Retour à l'application
+    </button>
   </div>
 </body>
 </html>"""
@@ -1692,14 +1846,14 @@ def setup_status(token):
         return jsonify({"status": "error", "error": "Session invalide"})
 
     status   = session.get("status", "pending")
-    messages = {{
+    messages = {
         "pending":       "En attente...",
         "oauth_done":    "Authentification réussie...",
         "creating":      "Création du projet Firebase (30-60s)...",
         "firebase_done": "Projet créé ! Finalisation...",
         "complete":      "Votre espace est prêt !",
         "error":         session.get("error", "Erreur inconnue")
-    }}
+    }
     return jsonify({
         "status":  status,
         "message": messages.get(status, status),
