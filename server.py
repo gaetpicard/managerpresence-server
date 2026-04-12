@@ -1591,16 +1591,15 @@ def setup_oauth_callback():
     @keyframes spin{{to{{transform:rotate(360deg)}}}}
     .step{{display:flex;align-items:center;gap:10px;padding:8px 12px;
            border-radius:8px;margin:4px 0;font-size:13px;text-align:left;
-           background:#F8F9FA;color:#888;transition:all 0.3s}}
+           background:#F8F9FA;color:#888}}
     .step.active{{background:#E3F2FD;color:#1565C0;font-weight:bold}}
     .step.done{{background:#E8F5E9;color:#2E7D32}}
     .step.error{{background:#FFEBEE;color:#C62828}}
-    .step-icon{{font-size:16px;min-width:24px;text-align:center}}
-    .error-box{{background:#FFEBEE;border-radius:8px;padding:16px;margin-top:16px;
-                color:#C62828;font-size:13px;display:none}}
+    .error-box{{background:#FFEBEE;border-radius:8px;padding:16px;
+                margin-top:16px;color:#C62828;font-size:13px;display:none}}
     .retry-btn{{background:#1565C0;color:white;border:none;border-radius:8px;
-                padding:10px 20px;font-size:14px;cursor:pointer;margin-top:12px;
-                display:none}}
+                padding:10px 20px;font-size:14px;cursor:pointer;
+                margin-top:12px;display:none}}
   </style>
 </head>
 <body>
@@ -1610,238 +1609,106 @@ def setup_oauth_callback():
     <p style="color:#555;font-size:14px;margin-bottom:12px">
       Nous configurons <strong>{club_name}</strong>
     </p>
-
-    <!-- Montagne avec alpiniste -->
-    <div style="position:relative;margin:16px 0 8px 0">
-      <svg viewBox="0 0 400 180" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">
-        <!-- Ciel dégradé -->
-        <defs>
-          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#C5D8F0"/>
-            <stop offset="100%" stop-color="#E8F4FD"/>
-          </linearGradient>
-          <linearGradient id="mtn1" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stop-color="#607D8B"/>
-            <stop offset="50%" stop-color="#78909C"/>
-            <stop offset="100%" stop-color="#90A4AE"/>
-          </linearGradient>
-          <linearGradient id="snow" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="white"/>
-            <stop offset="100%" stop-color="#E3F2FD"/>
-          </linearGradient>
-        </defs>
-        <rect width="400" height="180" fill="url(#sky)" rx="12"/>
-
-        <!-- Nuages -->
-        <ellipse cx="60" cy="25" rx="30" ry="10" fill="white" opacity="0.7"/>
-        <ellipse cx="80" cy="20" rx="20" ry="9" fill="white" opacity="0.7"/>
-        <ellipse cx="340" cy="30" rx="25" ry="9" fill="white" opacity="0.6"/>
-        <ellipse cx="355" cy="25" rx="18" ry="8" fill="white" opacity="0.6"/>
-
-        <!-- Montagne fond gauche -->
-        <path d="M 0,165 L 60,80 L 85,100 L 120,60 L 160,165 Z"
-              fill="#B0BEC5" opacity="0.8"/>
-        <!-- Neige montagne fond gauche -->
-        <path d="M 60,80 L 48,100 L 72,100 Z" fill="url(#snow)" opacity="0.9"/>
-
-        <!-- Montagne fond droite -->
-        <path d="M 240,165 L 290,70 L 320,95 L 350,55 L 400,165 Z"
-              fill="#B0BEC5" opacity="0.8"/>
-        <!-- Neige montagne fond droite -->
-        <path d="M 350,55 L 338,78 L 362,78 Z" fill="url(#snow)" opacity="0.9"/>
-
-        <!-- Montagne principale (irrégulière comme le logo) -->
-        <path d="M 60,165 L 110,110 L 140,125 L 170,75 L 195,30 L 210,50 L 230,35 L 255,85 L 275,70 L 310,120 L 340,165 Z"
-              fill="url(#mtn1)"/>
-        <!-- Face sombre gauche -->
-        <path d="M 60,165 L 195,30 L 170,75 L 140,125 L 110,110 Z"
-              fill="#546E7A" opacity="0.5"/>
-
-        <!-- Neige sommet principal -->
-        <path d="M 195,30 L 175,62 L 200,58 L 215,65 L 230,35 L 212,52 Z"
-              fill="url(#snow)"/>
-        <!-- Détail neige -->
-        <path d="M 195,30 L 183,50 L 195,48 L 208,52 L 218,38 Z"
-              fill="white" opacity="0.9"/>
-
-        <!-- Rochers détails -->
-        <path d="M 140,125 L 155,115 L 165,120 L 170,112 L 180,118 L 170,130 Z"
-              fill="#546E7A" opacity="0.4"/>
-        <path d="M 270,100 L 280,90 L 290,96 L 295,88 L 305,95 L 295,108 Z"
-              fill="#546E7A" opacity="0.4"/>
-
-        <!-- Sapins au pied -->
-        <polygon points="75,165 82,145 89,165" fill="#388E3C"/>
-        <polygon points="85,165 92,148 99,165" fill="#2E7D32"/>
-        <polygon points="300,165 307,147 314,165" fill="#388E3C"/>
-        <polygon points="310,165 317,150 324,165" fill="#2E7D32"/>
-
-        <!-- Sol herbe -->
-        <rect x="0" y="163" width="400" height="17" fill="#5D4037" rx="0"/>
-        <path d="M 0,163 Q 100,158 200,163 Q 300,168 400,163 L 400,167 Q 300,172 200,167 Q 100,162 0,167 Z"
-              fill="#4CAF50" opacity="0.6"/>
-
-        <!-- Chemin pointillé sur la montagne -->
-        <path d="M 75,163 C 110,150 140,135 160,118 C 175,105 183,88 193,65 C 197,50 200,38 203,30"
-              fill="none" stroke="white" stroke-width="1.5"
-              stroke-dasharray="5,4" opacity="0.7"/>
-
-        <!-- Alpiniste -->
-        <g id="climber" transform="translate(75,163)">
-          <!-- Sac à dos -->
-          <rect x="-9" y="-16" width="5" height="9" fill="#1565C0" rx="1.5"/>
-          <!-- Corps -->
-          <ellipse cx="0" cy="-9" rx="5.5" ry="7" fill="#E53935"/>
-          <!-- Tête -->
-          <circle cx="0" cy="-19" r="5" fill="#FFCC80"/>
-          <!-- Casque -->
-          <path d="M -5,-19 Q -4,-27 0,-28 Q 4,-27 5,-19" fill="#1565C0"/>
-          <rect x="-6" y="-20" width="12" height="3" fill="#1565C0" rx="1"/>
-          <!-- Visage souriant -->
-          <circle cx="-1.5" cy="-19" r="0.8" fill="#333"/>
-          <circle cx="1.5" cy="-19" r="0.8" fill="#333"/>
-          <path d="M -1.5,-17 Q 0,-16 1.5,-17" fill="none" stroke="#333" stroke-width="0.8"/>
-          <!-- Piolet -->
-          <line x1="6" y1="-15" x2="13" y2="-24" stroke="#888" stroke-width="1.5"/>
-          <line x1="10" y1="-24" x2="16" y2="-21" stroke="#888" stroke-width="2"/>
-          <line x1="10" y1="-24" x2="9" y2="-19" stroke="#888" stroke-width="1.5"/>
-          <!-- Bras gauche -->
-          <line x1="-5" y1="-12" x2="-10" y2="-8" stroke="#E53935" stroke-width="2"/>
-          <!-- Jambes -->
-          <line x1="-2" y1="-3" x2="-5" y2="4" stroke="#1565C0" stroke-width="2.5"/>
-          <line x1="2" y1="-3" x2="5" y2="4" stroke="#1565C0" stroke-width="2.5"/>
-        </g>
-
-        <!-- Drapeau au sommet -->
-        <g id="flag" opacity="0" transform="translate(203,30)">
-          <line x1="0" y1="0" x2="0" y2="-18" stroke="#555" stroke-width="1.5"/>
-          <polygon points="0,-18 14,-13 0,-8" fill="#E53935"/>
-        </g>
-
-        <!-- Pourcentage en bas -->
-        <text id="pct-text" x="200" y="176" text-anchor="middle"
-              font-size="11" fill="white" font-weight="bold"
-              font-family="Arial" opacity="0.9">0%</text>
-      </svg>
+    <div class="spinner" id="spinner"></div>
+    <div id="steps">
+      <div class="step active" id="s0">⏳ Initialisation...</div>
+      <div class="step" id="s1">🔐 Authentification Google</div>
+      <div class="step" id="s2">🔧 Création du projet Firebase</div>
+      <div class="step" id="s3">🔥 Configuration Firestore</div>
+      <div class="step" id="s4">✅ Finalisation</div>
     </div>
-
-    <div id="steps" style="margin:8px 0"></div>
-    <p style="color:#666;font-size:13px;margin-top:8px" id="msg">Initialisation...</p>
+    <p style="color:#666;font-size:13px;margin-top:12px" id="msg">Démarrage...</p>
     <p style="color:#aaa;font-size:11px;margin-top:8px">
       Cette opération prend 1 à 3 minutes.<br>Ne fermez pas cette page.
     </p>
-
     <div class="error-box" id="error-box"></div>
-    <button class="retry-btn" id="retry-btn"
-            onclick="window.history.back()">
-      ← Retour à l'application
+    <button class="retry-btn" id="retry-btn" onclick="window.history.back()">
+      ← Retour
     </button>
   </div>
-  <script>
-    const STEPS = [
-      {{id:'pending',       icon:'⏳', label:'Initialisation...'}},
-      {{id:'oauth_done',    icon:'🔐', label:'Authentification Google réussie'}},
-      {{id:'creating',      icon:'🔧', label:'Création du projet Firebase'}},
-      {{id:'firebase_done', icon:'🔥', label:'Firebase configuré'}},
-      {{id:'complete',      icon:'✅', label:'Votre espace est prêt !'}},
-    ];
-    const PROGRESS = {{
-      pending: 10, oauth_done: 25, creating: 50, firebase_done: 85, complete: 100
-    }};
-    let startTime = Date.now();
-    let pollTimer = null;
-    let launched = false;
+<script>
+var TOKEN = "{token}";
+var BASE = "/setup/" + TOKEN;
+var started = false;
+var polls = 0;
+var MAX_POLLS = 120;
 
-    function renderSteps(currentStatus) {{
-      const order = ['pending','oauth_done','creating','firebase_done','complete'];
-      const currentIdx = order.indexOf(currentStatus);
-      let html = '';
-      STEPS.forEach((step, i) => {{
-        let cls = 'step';
-        let icon = step.icon;
-        if (i < currentIdx) {{ cls += ' done'; icon = '✅'; }}
-        else if (i === currentIdx) {{ cls += ' active'; }}
-        html += `<div class="${{cls}}"><span class="step-icon">${{icon}}</span>${{step.label}}</div>`;
-      }});
-      document.getElementById('steps').innerHTML = html;
-    }}
+var STATUS_MAP = {{
+  "pending":       [0, "Initialisation..."],
+  "oauth_done":    [1, "Authentification réussie !"],
+  "creating":      [2, "Création du projet Firebase en cours..."],
+  "firebase_done": [3, "Firebase configuré !"],
+  "complete":      [4, "Votre espace est prêt !"]
+}};
 
-    // Points du chemin de l'alpiniste (x,y) pour 0% à 100%
-    const PATH = [
-      [75,163],[88,155],[103,145],[118,133],[135,120],
-      [150,108],[162,94],[173,78],[183,62],[192,46],[203,30]
-    ];
-    function setProgress(pct) {{
-      // Interpoler la position de l'alpiniste sur le chemin
-      const idx = Math.min(Math.floor(pct / 10), PATH.length - 1);
-      const [x, y] = PATH[idx];
-      document.getElementById('climber').setAttribute('transform', `translate(${{x}},${{y}})`);
-      document.getElementById('pct-text').textContent = pct + '%';
-      if (pct >= 100) {{
-        document.getElementById('flag').setAttribute('opacity', '1');
-      }}
-    }}
+function setStep(idx) {{
+  for (var i = 0; i <= 4; i++) {{
+    var el = document.getElementById("s" + i);
+    if (!el) continue;
+    el.className = "step" + (i < idx ? " done" : i === idx ? " active" : "");
+  }}
+}}
 
-    function showError(msg) {{
-      document.querySelector('.spinner').style.display = 'none';
-      document.getElementById('title').textContent = 'Une erreur est survenue';
-      document.getElementById('title').style.color = '#C62828';
-      const eb = document.getElementById('error-box');
-      eb.style.display = 'block';
-      eb.innerHTML = '❌ ' + (msg || 'Erreur inconnue') + '<br><br>' +
-        '<strong>Que faire ?</strong><br>' +
-        '• Vérifiez que la facturation est activée sur votre compte Google Cloud<br>' +
-        '• Retournez dans l'application et réessayez<br>' +
-        '• Si le problème persiste, contactez le support';
-      document.getElementById('retry-btn').style.display = 'inline-block';
-    }}
+function showError(msg) {{
+  document.getElementById("spinner").style.display = "none";
+  document.getElementById("title").textContent = "Erreur";
+  document.getElementById("title").style.color = "#C62828";
+  var eb = document.getElementById("error-box");
+  eb.style.display = "block";
+  eb.innerHTML = "❌ " + (msg || "Erreur inconnue") + "<br><br>Retournez dans l'application et réessayez.";
+  document.getElementById("retry-btn").style.display = "inline-block";
+}}
 
-    function checkTimeout() {{
-      const elapsed = (Date.now() - startTime) / 1000;
-      if (elapsed > 360) {{
-        clearTimeout(pollTimer);
-        showError('La création a pris trop de temps. Veuillez réessayer.');
-      }}
-    }}
-
-    async function lancer() {{
-      if (launched) return;
-      launched = true;
-      // Lancer la création sans attendre (fire and forget)
-      // Le poll vérifiera le statut indépendamment
-      fetch('/setup/{token}/create', {{method:'POST'}}).catch(() => {{}});
-      // Démarrer le poll après 2 secondes
-      setTimeout(poll, 2000);
-    }}
-
-    async function poll() {{
-      checkTimeout();
+function poll() {{
+  polls++;
+  if (polls > MAX_POLLS) {{ showError("Délai dépassé. Veuillez réessayer."); return; }}
+  
+  var xhr = new XMLHttpRequest();
+  xhr.open("GET", BASE + "/status", true);
+  xhr.onreadystatechange = function() {{
+    if (xhr.readyState !== 4) return;
+    if (xhr.status === 200) {{
       try {{
-        const r = await fetch('/setup/{token}/status');
-        const d = await r.json();
-        const status = d.status || 'pending';
-        const pct = PROGRESS[status] || 10;
-
-        setProgress(pct);
-        renderSteps(status);
-        document.getElementById('msg').textContent = d.message || '';
-
-        if (status === 'complete') {{
-          setTimeout(() => {{ window.location.href = '/setup/{token}/done'; }}, 800);
-        }} else if (status === 'error') {{
+        var d = JSON.parse(xhr.responseText);
+        var status = d.status || "pending";
+        var info = STATUS_MAP[status] || [0, d.message || status];
+        setStep(info[0]);
+        document.getElementById("msg").textContent = info[1];
+        if (status === "complete") {{
+          setTimeout(function() {{ window.location.href = BASE + "/done"; }}, 800);
+        }} else if (status === "error") {{
           showError(d.error);
         }} else {{
-          pollTimer = setTimeout(poll, 3000);
+          setTimeout(poll, 3000);
         }}
       }} catch(e) {{
-        document.getElementById('msg').textContent = 'Connexion en cours...';
-        pollTimer = setTimeout(poll, 5000);
+        setTimeout(poll, 3000);
       }}
+    }} else {{
+      setTimeout(poll, 5000);
     }}
+  }};
+  xhr.send();
+}}
 
-    // Démarrer immédiatement
-    lancer();
-  </script>
+function start() {{
+  if (started) return;
+  started = true;
+  // Lancer la création
+  var xhr2 = new XMLHttpRequest();
+  xhr2.open("POST", BASE + "/create", true);
+  xhr2.send();
+  // Poller indépendamment
+  setTimeout(poll, 2000);
+}}
+
+// Démarrer dès que possible
+if (document.readyState === "complete" || document.readyState === "interactive") {{
+  start();
+}} else {{
+  document.addEventListener("DOMContentLoaded", start);
+}}
+</script>
 </body>
 </html>"""
 
