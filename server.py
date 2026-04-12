@@ -1704,7 +1704,8 @@ def setup_oauth_callback():
       }}
     }}
 
-    window.onload = lancer;
+    // Démarrer immédiatement
+    lancer();
   </script>
 </head>
 <body>
