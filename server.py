@@ -1555,7 +1555,7 @@ def setup_oauth_redirect(token):
 
 @app.route("/setup/oauth/callback", methods=["GET"])
 def setup_oauth_callback():
-    """Étape 4 : Callback OAuth — affiche page d'attente qui déclenche la création."""
+    """Étape 4 : Callback OAuth — affiche page pour créer le projet Firebase manuellement."""
     code  = request.args.get("code", "")
     token = request.args.get("state", "")
     error = request.args.get("error", "")
@@ -1572,141 +1572,97 @@ def setup_oauth_callback():
 
     sauvegarder_setup(token, {**session, "oauth_code": code, "status": "oauth_done"})
     club_name = session.get("club_name", "")
+    gmail = session.get("gmail", "")
+
+    firebase_url = f"https://console.firebase.google.com/u/0/?hl=fr"
 
     return f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Création en cours — ManagerPresence</title>
+  <title>Créez votre projet Firebase — ManagerPresence</title>
   <style>
     *{{box-sizing:border-box;margin:0;padding:0}}
     body{{font-family:Arial;background:#F5F5F5;min-height:100vh;
          display:flex;align-items:center;justify-content:center;padding:20px}}
     .card{{background:white;border-radius:16px;padding:32px 24px;
-           max-width:420px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}}
-    .spinner{{width:40px;height:40px;border:4px solid #E3F2FD;
-              border-top:4px solid #1565C0;border-radius:50%;
-              animation:spin 1s linear infinite;margin:16px auto}}
-    @keyframes spin{{to{{transform:rotate(360deg)}}}}
-    .step{{display:flex;align-items:center;gap:10px;padding:8px 12px;
-           border-radius:8px;margin:4px 0;font-size:13px;text-align:left;
-           background:#F8F9FA;color:#888}}
-    .step.active{{background:#E3F2FD;color:#1565C0;font-weight:bold}}
-    .step.done{{background:#E8F5E9;color:#2E7D32}}
-    .step.error{{background:#FFEBEE;color:#C62828}}
-    .error-box{{background:#FFEBEE;border-radius:8px;padding:16px;
-                margin-top:16px;color:#C62828;font-size:13px;display:none}}
-    .retry-btn{{background:#1565C0;color:white;border:none;border-radius:8px;
-                padding:10px 20px;font-size:14px;cursor:pointer;
-                margin-top:12px;display:none}}
+           max-width:440px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}}
+    .step-box{{background:#F8F9FA;border-radius:8px;padding:14px;
+               margin:12px 0;text-align:left;font-size:13px;color:#333;line-height:1.8}}
+    .step-box strong{{color:#1565C0}}
+    .btn-firebase{{display:block;background:#FF6D00;color:white;
+                   text-decoration:none;border-radius:8px;padding:14px 20px;
+                   font-size:15px;font-weight:bold;margin:16px 0}}
+    .btn-done{{display:block;background:#2E7D32;color:white;border:none;
+               border-radius:8px;padding:14px 20px;font-size:15px;
+               font-weight:bold;width:100%;cursor:pointer;margin-top:8px}}
+    .warn{{background:#FFF3E0;border-radius:8px;padding:12px;
+           font-size:12px;color:#E65100;margin-top:12px}}
   </style>
 </head>
 <body>
   <div class="card">
-    <div style="font-size:48px;margin-bottom:8px">🏔️</div>
-    <h2 id="title" style="color:#1565C0;margin-bottom:4px">Création en cours...</h2>
-    <p style="color:#555;font-size:14px;margin-bottom:12px">
-      Nous configurons <strong>{club_name}</strong>
+    <div style="font-size:40px;margin-bottom:8px">🏔️</div>
+    <h2 style="color:#1565C0;margin-bottom:4px">Étape 2 sur 3</h2>
+    <p style="color:#555;font-size:14px;margin-bottom:4px">
+      Créez votre espace Firebase pour<br><strong>{club_name}</strong>
     </p>
-    <div class="spinner" id="spinner"></div>
-    <div id="steps">
-      <div class="step active" id="s0">⏳ Initialisation...</div>
-      <div class="step" id="s1">🔐 Authentification Google</div>
-      <div class="step" id="s2">🔧 Création du projet Firebase</div>
-      <div class="step" id="s3">🔥 Configuration Firestore</div>
-      <div class="step" id="s4">✅ Finalisation</div>
+    <p style="color:#888;font-size:12px;margin-bottom:12px">
+      Connecté avec {gmail}
+    </p>
+
+    <div class="step-box">
+      <div>1️⃣ &nbsp;Cliquez <strong>"Ouvrir Firebase Console"</strong> ci-dessous</div>
+      <div>2️⃣ &nbsp;Cliquez <strong>"Créer un projet"</strong></div>
+      <div>3️⃣ &nbsp;Donnez un nom (ex: <strong>"{club_name}"</strong>)</div>
+      <div>4️⃣ &nbsp;Cliquez <strong>"Continuer"</strong> → <strong>"Continuer"</strong> → <strong>"Créer le projet"</strong></div>
+      <div>5️⃣ &nbsp;Attendez que le projet soit créé puis revenez ici</div>
     </div>
-    <p style="color:#666;font-size:13px;margin-top:12px" id="msg">Démarrage...</p>
-    <p style="color:#aaa;font-size:11px;margin-top:8px">
-      Cette opération prend 1 à 3 minutes.<br>Ne fermez pas cette page.
-    </p>
-    <div class="error-box" id="error-box"></div>
-    <button class="retry-btn" id="retry-btn" onclick="window.history.back()">
-      ← Retour
+
+    <a class="btn-firebase" href="{firebase_url}" target="_blank">
+      🔥 Ouvrir Firebase Console →
+    </a>
+
+    <div class="warn">
+      ⚠️ Revenez sur cette page après avoir créé votre projet.<br>
+      Ne fermez pas cet onglet !
+    </div>
+
+    <button class="btn-done" onclick="validerProjet()">
+      ✅ J'ai créé mon projet Firebase
     </button>
+
+    <div id="msg" style="color:#888;font-size:13px;margin-top:12px"></div>
   </div>
 <script>
 var TOKEN = "{token}";
 var BASE = "/setup/" + TOKEN;
-var started = false;
-var polls = 0;
-var MAX_POLLS = 120;
 
-var STATUS_MAP = {{
-  "pending":       [0, "Initialisation..."],
-  "oauth_done":    [1, "Authentification réussie !"],
-  "creating":      [2, "Création du projet Firebase en cours..."],
-  "firebase_done": [3, "Firebase configuré !"],
-  "complete":      [4, "Votre espace est prêt !"]
-}};
+function validerProjet() {{
+  document.getElementById("msg").textContent = "Recherche de votre projet...";
+  var btn = document.querySelector(".btn-done");
+  btn.disabled = true;
+  btn.textContent = "⏳ Recherche en cours...";
 
-function setStep(idx) {{
-  for (var i = 0; i <= 4; i++) {{
-    var el = document.getElementById("s" + i);
-    if (!el) continue;
-    el.className = "step" + (i < idx ? " done" : i === idx ? " active" : "");
-  }}
-}}
-
-function showError(msg) {{
-  document.getElementById("spinner").style.display = "none";
-  document.getElementById("title").textContent = "Erreur";
-  document.getElementById("title").style.color = "#C62828";
-  var eb = document.getElementById("error-box");
-  eb.style.display = "block";
-  eb.innerHTML = "❌ " + (msg || "Erreur inconnue") + "<br><br>Retournez dans l'application et réessayez.";
-  document.getElementById("retry-btn").style.display = "inline-block";
-}}
-
-function poll() {{
-  polls++;
-  if (polls > MAX_POLLS) {{ showError("Délai dépassé. Veuillez réessayer."); return; }}
-  
   var xhr = new XMLHttpRequest();
-  xhr.open("GET", BASE + "/status", true);
+  xhr.open("POST", BASE + "/create", true);
   xhr.onreadystatechange = function() {{
     if (xhr.readyState !== 4) return;
     if (xhr.status === 200) {{
+      window.location.href = BASE + "/configure";
+    }} else {{
       try {{
         var d = JSON.parse(xhr.responseText);
-        var status = d.status || "pending";
-        var info = STATUS_MAP[status] || [0, d.message || status];
-        setStep(info[0]);
-        document.getElementById("msg").textContent = info[1];
-        if (status === "complete") {{
-          setTimeout(function() {{ window.location.href = BASE + "/done"; }}, 800);
-        }} else if (status === "error") {{
-          showError(d.error);
-        }} else {{
-          setTimeout(poll, 3000);
-        }}
+        document.getElementById("msg").textContent = "❌ " + (d.error || "Erreur");
       }} catch(e) {{
-        setTimeout(poll, 3000);
+        document.getElementById("msg").textContent = "❌ Erreur inattendue";
       }}
-    }} else {{
-      setTimeout(poll, 5000);
+      btn.disabled = false;
+      btn.textContent = "✅ J'ai créé mon projet Firebase";
     }}
   }};
   xhr.send();
-}}
-
-function start() {{
-  if (started) return;
-  started = true;
-  // Lancer la création
-  var xhr2 = new XMLHttpRequest();
-  xhr2.open("POST", BASE + "/create", true);
-  xhr2.send();
-  // Poller indépendamment
-  setTimeout(poll, 2000);
-}}
-
-// Démarrer dès que possible
-if (document.readyState === "complete" || document.readyState === "interactive") {{
-  start();
-}} else {{
-  document.addEventListener("DOMContentLoaded", start);
 }}
 </script>
 </body>
@@ -1715,20 +1671,22 @@ if (document.readyState === "complete" || document.readyState === "interactive")
 
 @app.route("/setup/<token>/create", methods=["POST"])
 def setup_create_firebase(token):
-    """Étape 5 : Crée le projet Firebase (appelé par le JS de la page callback)."""
+    """
+    Étape 5 : L'utilisateur a créé son projet Firebase manuellement.
+    On échange le code OAuth, on liste ses projets et on récupère le plus récent.
+    """
     session = charger_setup(token)
     if not session:
         return jsonify({"error": "Session invalide"}), 404
 
-    status = session.get("status", "")
-    if status in ("firebase_done", "complete"):
-        return jsonify({"success": True, "status": status})
+    if session.get("status") in ("firebase_done", "complete"):
+        return jsonify({"success": True, "status": session.get("status")})
 
     oauth_code = session.get("oauth_code", "")
     if not oauth_code:
         return jsonify({"error": "Code OAuth manquant"}), 400
 
-    # Échanger le code OAuth contre un access_token
+    # Échanger le code OAuth
     try:
         token_resp = http_requests.post("https://oauth2.googleapis.com/token", data={
             "code":          oauth_code,
@@ -1740,36 +1698,229 @@ def setup_create_firebase(token):
         token_data = token_resp.json()
         if "error" in token_data:
             err = token_data.get("error_description", "OAuth error")
-            sauvegarder_setup(token, {**session, "status": "error", "error": err})
             return jsonify({"error": err}), 400
     except Exception as e:
-        sauvegarder_setup(token, {**session, "status": "error", "error": str(e)})
         return jsonify({"error": str(e)}), 500
 
+    # Sauvegarder le token pour la configuration ultérieure
+    sauvegarder_setup(token, {**session, "token_data": token_data, "status": "listing"})
+
+    return jsonify({"success": True, "status": "listing"})
+
+
+@app.route("/setup/<token>/configure", methods=["GET"])
+def setup_configure_page(token):
+    """Page de sélection et configuration du projet Firebase."""
+    session = charger_setup(token)
+    if not session:
+        return "Session invalide", 404
+
     club_name = session.get("club_name", "")
-    gmail     = session.get("gmail", "")
-    sauvegarder_setup(token, {**session, "status": "creating"})
 
-    result = creer_projet_firebase(token_data, club_name, gmail)
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Configuration — ManagerPresence</title>
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:Arial;background:#F5F5F5;min-height:100vh;
+         display:flex;align-items:center;justify-content:center;padding:20px}}
+    .card{{background:white;border-radius:16px;padding:32px 24px;
+           max-width:440px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}}
+    .spinner{{width:40px;height:40px;border:4px solid #E3F2FD;
+              border-top:4px solid #1565C0;border-radius:50%;
+              animation:spin 1s linear infinite;margin:16px auto}}
+    @keyframes spin{{to{{transform:rotate(360deg)}}}}
+    .step{{display:flex;align-items:center;gap:10px;padding:8px 12px;
+           border-radius:8px;margin:4px 0;font-size:13px;text-align:left;
+           background:#F8F9FA;color:#888}}
+    .step.active{{background:#E3F2FD;color:#1565C0;font-weight:bold}}
+    .step.done{{background:#E8F5E9;color:#2E7D32}}
+    .error-box{{background:#FFEBEE;border-radius:8px;padding:16px;
+                margin-top:16px;color:#C62828;font-size:13px;display:none}}
+    .retry-btn{{background:#E53935;color:white;border:none;border-radius:8px;
+                padding:10px 20px;font-size:14px;cursor:pointer;
+                margin-top:12px;display:none}}
 
-    if not result:
-        sauvegarder_setup(token, {**session, "status": "error",
-                                   "error": "Échec création projet Firebase"})
-        return jsonify({"error": "Échec création Firebase"}), 500
+    <!-- SVG Montagne -->
+    .mountain-wrap{{margin:12px 0 8px 0}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size:40px;margin-bottom:8px">🏔️</div>
+    <h2 id="title" style="color:#1565C0;margin-bottom:4px">Configuration en cours...</h2>
+    <p style="color:#555;font-size:14px;margin-bottom:12px">
+      Nous configurons <strong>{club_name}</strong>
+    </p>
 
-    # Créer la licence trial
-    licence = creer_licence_trial(result["project_id"], club_name)
-    sauvegarder_licence(result["project_id"], licence)
+    <!-- Montagne alpiniste SVG -->
+    <div class="mountain-wrap">
+      <svg viewBox="0 0 400 180" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">
+        <defs>
+          <linearGradient id="sky2" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#C5D8F0"/>
+            <stop offset="100%" stop-color="#E8F4FD"/>
+          </linearGradient>
+          <linearGradient id="mtn2" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#607D8B"/>
+            <stop offset="50%" stop-color="#78909C"/>
+            <stop offset="100%" stop-color="#90A4AE"/>
+          </linearGradient>
+        </defs>
+        <rect width="400" height="180" fill="url(#sky2)" rx="12"/>
+        <ellipse cx="60" cy="25" rx="30" ry="10" fill="white" opacity="0.7"/>
+        <ellipse cx="80" cy="20" rx="20" ry="9" fill="white" opacity="0.7"/>
+        <ellipse cx="340" cy="30" rx="25" ry="9" fill="white" opacity="0.6"/>
+        <path d="M 0,165 L 60,80 L 85,100 L 120,60 L 160,165 Z" fill="#B0BEC5" opacity="0.8"/>
+        <path d="M 60,80 L 48,100 L 72,100 Z" fill="white" opacity="0.9"/>
+        <path d="M 240,165 L 290,70 L 320,95 L 350,55 L 400,165 Z" fill="#B0BEC5" opacity="0.8"/>
+        <path d="M 350,55 L 338,78 L 362,78 Z" fill="white" opacity="0.9"/>
+        <path d="M 60,165 L 110,110 L 140,125 L 170,75 L 195,30 L 210,50 L 230,35 L 255,85 L 275,70 L 310,120 L 340,165 Z" fill="url(#mtn2)"/>
+        <path d="M 60,165 L 195,30 L 170,75 L 140,125 L 110,110 Z" fill="#546E7A" opacity="0.5"/>
+        <path d="M 195,30 L 175,62 L 200,58 L 215,65 L 230,35 L 212,52 Z" fill="white"/>
+        <path d="M 195,30 L 183,50 L 195,48 L 208,52 L 218,38 Z" fill="white" opacity="0.9"/>
+        <polygon points="75,165 82,145 89,165" fill="#388E3C"/>
+        <polygon points="85,165 92,148 99,165" fill="#2E7D32"/>
+        <polygon points="300,165 307,147 314,165" fill="#388E3C"/>
+        <polygon points="310,165 317,150 324,165" fill="#2E7D32"/>
+        <rect x="0" y="163" width="400" height="17" fill="#5D4037"/>
+        <path d="M 75,163 C 110,150 140,135 160,118 C 175,105 183,88 193,65 C 197,50 200,38 203,30"
+              fill="none" stroke="white" stroke-width="1.5" stroke-dasharray="5,4" opacity="0.7"/>
+        <g id="climber2" transform="translate(75,163)">
+          <rect x="-9" y="-16" width="5" height="9" fill="#1565C0" rx="1.5"/>
+          <ellipse cx="0" cy="-9" rx="5.5" ry="7" fill="#E53935"/>
+          <circle cx="0" cy="-19" r="5" fill="#FFCC80"/>
+          <path d="M -5,-19 Q -4,-27 0,-28 Q 4,-27 5,-19" fill="#1565C0"/>
+          <rect x="-6" y="-20" width="12" height="3" fill="#1565C0" rx="1"/>
+          <line x1="6" y1="-15" x2="13" y2="-24" stroke="#888" stroke-width="1.5"/>
+          <line x1="10" y1="-24" x2="16" y2="-21" stroke="#888" stroke-width="2"/>
+          <line x1="-5" y1="-12" x2="-10" y2="-8" stroke="#E53935" stroke-width="2"/>
+          <line x1="-2" y1="-3" x2="-5" y2="4" stroke="#1565C0" stroke-width="2.5"/>
+          <line x1="2" y1="-3" x2="5" y2="4" stroke="#1565C0" stroke-width="2.5"/>
+        </g>
+        <g id="flag2" opacity="0" transform="translate(203,30)">
+          <line x1="0" y1="0" x2="0" y2="-18" stroke="#555" stroke-width="1.5"/>
+          <polygon points="0,-18 14,-13 0,-8" fill="#E53935"/>
+        </g>
+        <text id="pct2" x="200" y="176" text-anchor="middle"
+              font-size="11" fill="white" font-weight="bold" font-family="Arial" opacity="0.9">0%</text>
+      </svg>
+    </div>
 
-    sauvegarder_setup(token, {
-        **session,
-        "status":     "firebase_done",
-        "project_id": result["project_id"],
-        "app_id":     result["app_id"],
-        "api_key":    result["api_key"],
-    })
+    <div id="steps">
+      <div class="step active" id="s0">🔍 Recherche de votre projet Firebase</div>
+      <div class="step" id="s1">📱 Enregistrement de l'application Android</div>
+      <div class="step" id="s2">🔥 Configuration de Firestore</div>
+      <div class="step" id="s3">🔒 Règles de sécurité</div>
+      <div class="step" id="s4">✅ Finalisation</div>
+    </div>
 
-    return jsonify({"success": True, "status": "firebase_done"})
+    <div class="spinner" id="spinner" style="margin-top:12px"></div>
+    <p style="color:#666;font-size:13px;margin-top:8px" id="msg">Recherche en cours...</p>
+    <p style="color:#aaa;font-size:11px;margin-top:8px">
+      Cette opération prend environ 30 secondes.<br>Ne fermez pas cette page.
+    </p>
+    <div class="error-box" id="error-box"></div>
+    <button class="retry-btn" id="retry-btn" onclick="window.history.back()">← Retour</button>
+  </div>
+<script>
+var TOKEN = "{token}";
+var BASE = "/setup/" + TOKEN;
+var polls = 0;
+var MAX_POLLS = 60;
+var PATH = [
+  [75,163],[88,155],[103,145],[118,133],[135,120],
+  [150,108],[162,94],[173,78],[183,62],[192,46],[203,30]
+];
+
+function setStep(idx) {{
+  for (var i = 0; i <= 4; i++) {{
+    var el = document.getElementById("s" + i);
+    if (!el) continue;
+    el.className = "step" + (i < idx ? " done" : i === idx ? " active" : "");
+  }}
+}}
+
+function setProgress(pct) {{
+  var idx = Math.min(Math.floor(pct / 10), PATH.length - 1);
+  var x = PATH[idx][0];
+  var y = PATH[idx][1];
+  document.getElementById("climber2").setAttribute("transform", "translate(" + x + "," + y + ")");
+  document.getElementById("pct2").textContent = pct + "%";
+  if (pct >= 100) {{
+    document.getElementById("flag2").setAttribute("opacity", "1");
+  }}
+}}
+
+function showError(msg) {{
+  document.getElementById("spinner").style.display = "none";
+  document.getElementById("title").textContent = "Erreur";
+  document.getElementById("title").style.color = "#C62828";
+  var eb = document.getElementById("error-box");
+  eb.style.display = "block";
+  eb.innerHTML = "❌ " + (msg || "Erreur") + "<br><br>Vérifiez que vous avez bien créé un projet Firebase et réessayez.";
+  document.getElementById("retry-btn").style.display = "inline-block";
+}}
+
+var STATUS_PROGRESS = {{
+  "listing": [0, 10],
+  "configuring": [1, 35],
+  "firestore": [2, 60],
+  "rules": [3, 80],
+  "firebase_done": [4, 95],
+  "complete": [4, 100]
+}};
+
+function poll() {{
+  polls++;
+  if (polls > MAX_POLLS) {{ showError("Délai dépassé. Réessayez."); return; }}
+  var xhr = new XMLHttpRequest();
+  xhr.open("GET", BASE + "/status", true);
+  xhr.onreadystatechange = function() {{
+    if (xhr.readyState !== 4) return;
+    if (xhr.status === 200) {{
+      try {{
+        var d = JSON.parse(xhr.responseText);
+        var status = d.status || "listing";
+        var info = STATUS_PROGRESS[status] || [0, 10];
+        setStep(info[0]);
+        setProgress(info[1]);
+        document.getElementById("msg").textContent = d.message || "";
+        if (status === "complete") {{
+          setTimeout(function() {{ window.location.href = BASE + "/done"; }}, 800);
+        }} else if (status === "error") {{
+          showError(d.error);
+        }} else {{
+          setTimeout(poll, 3000);
+        }}
+      }} catch(e) {{ setTimeout(poll, 3000); }}
+    }} else {{ setTimeout(poll, 5000); }}
+  }};
+  xhr.send();
+}}
+
+// Lancer la configuration automatiquement
+function start() {{
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", BASE + "/configure-firebase", true);
+  xhr.onreadystatechange = function() {{
+    if (xhr.readyState !== 4) return;
+  }};
+  xhr.send();
+  setTimeout(poll, 2000);
+}}
+
+if (document.readyState === "complete" || document.readyState === "interactive") {{
+  start();
+}} else {{
+  document.addEventListener("DOMContentLoaded", start);
+}}
+</script>
+</body>
+</html>"""
 
 
 @app.route("/setup/<token>/status", methods=["GET"])
@@ -1781,12 +1932,15 @@ def setup_status(token):
 
     status   = session.get("status", "pending")
     messages = {
-        "pending":       "En attente...",
-        "oauth_done":    "Authentification réussie...",
-        "creating":      "Création du projet Firebase (30-60s)...",
-        "firebase_done": "Projet créé ! Finalisation...",
-        "complete":      "Votre espace est prêt !",
-        "error":         session.get("error", "Erreur inconnue")
+        "pending":      "En attente...",
+        "oauth_done":   "Authentification Google réussie !",
+        "listing":      "Recherche de votre projet Firebase...",
+        "configuring":  "Projet trouvé ! Enregistrement de l'application...",
+        "firestore":    "Activation de Firestore en France (europe-west9)...",
+        "rules":        "Finalisation de la configuration...",
+        "firebase_done":"Configuration terminée !",
+        "complete":     "Votre espace est prêt !",
+        "error":        session.get("error", "Erreur inconnue")
     }
     return jsonify({
         "status":  status,
@@ -1987,6 +2141,157 @@ def get_credentials(token):
         "club_name":        session.get("club_name", ""),
     })
 
+
+
+
+@app.route("/setup/<token>/configure-firebase", methods=["POST"])
+def configure_firebase(token):
+    """
+    Configure le projet Firebase de l'utilisateur :
+    1. Liste ses projets Firebase via API
+    2. Prend le plus récent
+    3. Enregistre l'app Android (com.managerpresence)
+    4. Active Firestore en europe-west9
+    5. Configure les règles de sécurité basiques
+    """
+    session = charger_setup(token)
+    if not session:
+        return jsonify({"error": "Session invalide"}), 404
+
+    if session.get("status") in ("firebase_done", "complete"):
+        return jsonify({"success": True})
+
+    token_data = session.get("token_data", {})
+    if not token_data:
+        return jsonify({"error": "Token OAuth manquant"}), 400
+
+    club_name = session.get("club_name", "")
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=token_data.get("access_token", ""),
+            refresh_token=token_data.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+            scopes=GOOGLE_SCOPES
+        )
+
+        sauvegarder_setup(token, {**session, "status": "listing"})
+
+        # 1. Lister les projets Firebase disponibles
+        firebase_svc = build("firebase", "v1beta1", credentials=creds)
+        projects_resp = firebase_svc.projects().list().execute()
+        projects = projects_resp.get("results", [])
+
+        if not projects:
+            sauvegarder_setup(token, {**session, "status": "error",
+                "error": "Aucun projet Firebase trouvé. Avez-vous bien créé un projet ?"})
+            return jsonify({"error": "Aucun projet Firebase trouvé"}), 404
+
+        # Prendre le projet le plus récent (dernier de la liste)
+        projet = projects[-1]
+        project_id = projet.get("projectId", "")
+        print(f"[CONFIGURE] Projet trouvé: {project_id}")
+
+        sauvegarder_setup(token, {**session, "status": "configuring",
+            "project_id": project_id})
+
+        # 2. Enregistrer l'app Android
+        app_id = ""
+        try:
+            # Vérifier si l'app existe déjà
+            apps_resp = firebase_svc.projects().androidApps().list(
+                parent=f"projects/{project_id}"
+            ).execute()
+            existing_apps = apps_resp.get("apps", [])
+
+            mp_app = next((a for a in existing_apps
+                          if a.get("packageName") == "com.managerpresence"), None)
+
+            if mp_app:
+                app_id = mp_app.get("appId", "")
+                print(f"[CONFIGURE] App Android existante: {app_id}")
+            else:
+                create_resp = firebase_svc.projects().androidApps().create(
+                    parent=f"projects/{project_id}",
+                    body={
+                        "packageName": "com.managerpresence",
+                        "displayName": club_name
+                    }
+                ).execute()
+                time.sleep(5)
+                # Relister pour récupérer l'appId
+                apps_resp2 = firebase_svc.projects().androidApps().list(
+                    parent=f"projects/{project_id}"
+                ).execute()
+                apps2 = apps_resp2.get("apps", [])
+                mp_app2 = next((a for a in apps2
+                               if a.get("packageName") == "com.managerpresence"), None)
+                app_id = mp_app2.get("appId", "") if mp_app2 else ""
+                print(f"[CONFIGURE] App Android créée: {app_id}")
+        except Exception as e:
+            print(f"[CONFIGURE] Erreur app Android: {e}")
+
+        # 3. Activer Firestore en europe-west9
+        sauvegarder_setup(token, {**session, "status": "firestore",
+            "project_id": project_id, "app_id": app_id})
+        try:
+            fs_svc = build("firestore", "v1", credentials=creds)
+            fs_svc.projects().databases().create(
+                parent=f"projects/{project_id}",
+                body={
+                    "type": "FIRESTORE_NATIVE",
+                    "locationId": "europe-west9"
+                },
+                databaseId="(default)"
+            ).execute()
+            print(f"[CONFIGURE] Firestore activé: {project_id}")
+            time.sleep(4)
+        except Exception as e:
+            print(f"[CONFIGURE] Firestore (déjà actif ou erreur): {e}")
+
+        # 4. Récupérer l'API key
+        sauvegarder_setup(token, {**session, "status": "rules",
+            "project_id": project_id, "app_id": app_id})
+        api_key = ""
+        try:
+            keys_svc = build("apikeys", "v2", credentials=creds)
+            keys_resp = keys_svc.projects().locations().keys().list(
+                parent=f"projects/{project_id}/locations/global"
+            ).execute()
+            if keys_resp.get("keys"):
+                key_name = keys_resp["keys"][0]["name"]
+                key_detail = keys_svc.projects().locations().keys().getKeyString(
+                    name=key_name
+                ).execute()
+                api_key = key_detail.get("keyString", "")
+        except Exception as e:
+            print(f"[CONFIGURE] API key: {e}")
+
+        # 5. Finaliser
+        licence = creer_licence_trial(project_id, club_name)
+        sauvegarder_licence(project_id, licence)
+
+        sauvegarder_setup(token, {
+            **session,
+            "status":     "firebase_done",
+            "project_id": project_id,
+            "app_id":     app_id,
+            "api_key":    api_key,
+        })
+
+        print(f"[CONFIGURE] Terminé — project_id={project_id}, app_id={app_id}")
+        return jsonify({"success": True, "project_id": project_id})
+
+    except Exception as e:
+        import traceback
+        print(f"[CONFIGURE] Erreur: {traceback.format_exc()}")
+        sauvegarder_setup(token, {**session, "status": "error", "error": str(e)})
+        return jsonify({"error": str(e)}), 500
 
 # ============================================================
 # ROUTES LÉGALES — Politique de confidentialité & CGU
