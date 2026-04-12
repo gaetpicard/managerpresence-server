@@ -1633,8 +1633,8 @@ def setup_oauth_callback():
 
     // Points du chemin de l'alpiniste (x,y) pour 0% à 100%
     const PATH = [
-      [90,148],[105,138],[120,128],[135,118],[150,108],
-      [162,96],[173,82],[183,65],[190,45],[196,25],[200,12]
+      [75,163],[88,155],[103,145],[118,133],[135,120],
+      [150,108],[162,94],[173,78],[183,62],[192,46],[203,30]
     ];
     function setProgress(pct) {{
       // Interpoler la position de l'alpiniste sur le chemin
@@ -1672,10 +1672,11 @@ def setup_oauth_callback():
     async function lancer() {{
       if (launched) return;
       launched = true;
-      try {{
-        await fetch('/setup/{token}/create', {{method:'POST'}});
-      }} catch(e) {{}}
-      poll();
+      // Lancer la création sans attendre (fire and forget)
+      // Le poll vérifiera le statut indépendamment
+      fetch('/setup/{token}/create', {{method:'POST'}}).catch(() => {{}});
+      // Démarrer le poll après 2 secondes
+      setTimeout(poll, 2000);
     }}
 
     async function poll() {{
@@ -1716,50 +1717,115 @@ def setup_oauth_callback():
 
     <!-- Montagne avec alpiniste -->
     <div style="position:relative;margin:16px 0 8px 0">
-      <svg viewBox="0 0 400 160" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">
-        <!-- Ciel -->
-        <rect width="400" height="160" fill="#F0F4FF" rx="12"/>
-        <!-- Neige sommet -->
-        <polygon points="200,10 230,55 170,55" fill="white" stroke="#ddd" stroke-width="1"/>
-        <!-- Montagne principale -->
-        <polygon points="200,10 310,150 90,150" fill="#90A4AE"/>
-        <!-- Face gauche ombre -->
-        <polygon points="200,10 90,150 155,150" fill="#78909C"/>
-        <!-- Montagne droite fond -->
-        <polygon points="320,40 400,150 240,150" fill="#B0BEC5"/>
-        <!-- Montagne gauche fond -->
-        <polygon points="80,60 160,150 0,150" fill="#B0BEC5"/>
-        <!-- Sol -->
-        <rect x="0" y="148" width="400" height="12" fill="#8D6E63" rx="0"/>
-        <!-- Chemin de progression (ligne pointillée sur la montagne) -->
-        <path d="M 90,148 Q 130,120 160,100 Q 175,85 200,10"
+      <svg viewBox="0 0 400 180" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">
+        <!-- Ciel dégradé -->
+        <defs>
+          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#C5D8F0"/>
+            <stop offset="100%" stop-color="#E8F4FD"/>
+          </linearGradient>
+          <linearGradient id="mtn1" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#607D8B"/>
+            <stop offset="50%" stop-color="#78909C"/>
+            <stop offset="100%" stop-color="#90A4AE"/>
+          </linearGradient>
+          <linearGradient id="snow" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="white"/>
+            <stop offset="100%" stop-color="#E3F2FD"/>
+          </linearGradient>
+        </defs>
+        <rect width="400" height="180" fill="url(#sky)" rx="12"/>
+
+        <!-- Nuages -->
+        <ellipse cx="60" cy="25" rx="30" ry="10" fill="white" opacity="0.7"/>
+        <ellipse cx="80" cy="20" rx="20" ry="9" fill="white" opacity="0.7"/>
+        <ellipse cx="340" cy="30" rx="25" ry="9" fill="white" opacity="0.6"/>
+        <ellipse cx="355" cy="25" rx="18" ry="8" fill="white" opacity="0.6"/>
+
+        <!-- Montagne fond gauche -->
+        <path d="M 0,165 L 60,80 L 85,100 L 120,60 L 160,165 Z"
+              fill="#B0BEC5" opacity="0.8"/>
+        <!-- Neige montagne fond gauche -->
+        <path d="M 60,80 L 48,100 L 72,100 Z" fill="url(#snow)" opacity="0.9"/>
+
+        <!-- Montagne fond droite -->
+        <path d="M 240,165 L 290,70 L 320,95 L 350,55 L 400,165 Z"
+              fill="#B0BEC5" opacity="0.8"/>
+        <!-- Neige montagne fond droite -->
+        <path d="M 350,55 L 338,78 L 362,78 Z" fill="url(#snow)" opacity="0.9"/>
+
+        <!-- Montagne principale (irrégulière comme le logo) -->
+        <path d="M 60,165 L 110,110 L 140,125 L 170,75 L 195,30 L 210,50 L 230,35 L 255,85 L 275,70 L 310,120 L 340,165 Z"
+              fill="url(#mtn1)"/>
+        <!-- Face sombre gauche -->
+        <path d="M 60,165 L 195,30 L 170,75 L 140,125 L 110,110 Z"
+              fill="#546E7A" opacity="0.5"/>
+
+        <!-- Neige sommet principal -->
+        <path d="M 195,30 L 175,62 L 200,58 L 215,65 L 230,35 L 212,52 Z"
+              fill="url(#snow)"/>
+        <!-- Détail neige -->
+        <path d="M 195,30 L 183,50 L 195,48 L 208,52 L 218,38 Z"
+              fill="white" opacity="0.9"/>
+
+        <!-- Rochers détails -->
+        <path d="M 140,125 L 155,115 L 165,120 L 170,112 L 180,118 L 170,130 Z"
+              fill="#546E7A" opacity="0.4"/>
+        <path d="M 270,100 L 280,90 L 290,96 L 295,88 L 305,95 L 295,108 Z"
+              fill="#546E7A" opacity="0.4"/>
+
+        <!-- Sapins au pied -->
+        <polygon points="75,165 82,145 89,165" fill="#388E3C"/>
+        <polygon points="85,165 92,148 99,165" fill="#2E7D32"/>
+        <polygon points="300,165 307,147 314,165" fill="#388E3C"/>
+        <polygon points="310,165 317,150 324,165" fill="#2E7D32"/>
+
+        <!-- Sol herbe -->
+        <rect x="0" y="163" width="400" height="17" fill="#5D4037" rx="0"/>
+        <path d="M 0,163 Q 100,158 200,163 Q 300,168 400,163 L 400,167 Q 300,172 200,167 Q 100,162 0,167 Z"
+              fill="#4CAF50" opacity="0.6"/>
+
+        <!-- Chemin pointillé sur la montagne -->
+        <path d="M 75,163 C 110,150 140,135 160,118 C 175,105 183,88 193,65 C 197,50 200,38 203,30"
               fill="none" stroke="white" stroke-width="1.5"
-              stroke-dasharray="4,4" opacity="0.6"/>
-        <!-- Alpiniste (groupe positionné dynamiquement) -->
-        <g id="climber" transform="translate(90,148)">
-          <!-- Corps -->
-          <ellipse cx="0" cy="-8" rx="5" ry="7" fill="#E53935"/>
-          <!-- Tête -->
-          <circle cx="0" cy="-18" r="5" fill="#FFCC80"/>
-          <!-- Casque -->
-          <path d="M -5,-18 Q 0,-26 5,-18" fill="#1565C0" stroke="#1565C0" stroke-width="1"/>
-          <!-- Piolet -->
-          <line x1="6" y1="-14" x2="14" y2="-22" stroke="#555" stroke-width="1.5"/>
-          <line x1="11" y1="-22" x2="17" y2="-20" stroke="#555" stroke-width="1.5"/>
-          <!-- Jambes -->
-          <line x1="-2" y1="-2" x2="-4" y2="4" stroke="#333" stroke-width="2"/>
-          <line x1="2" y1="-2" x2="4" y2="4" stroke="#333" stroke-width="2"/>
+              stroke-dasharray="5,4" opacity="0.7"/>
+
+        <!-- Alpiniste -->
+        <g id="climber" transform="translate(75,163)">
           <!-- Sac à dos -->
-          <rect x="-8" y="-15" width="5" height="8" fill="#1565C0" rx="1"/>
+          <rect x="-9" y="-16" width="5" height="9" fill="#1565C0" rx="1.5"/>
+          <!-- Corps -->
+          <ellipse cx="0" cy="-9" rx="5.5" ry="7" fill="#E53935"/>
+          <!-- Tête -->
+          <circle cx="0" cy="-19" r="5" fill="#FFCC80"/>
+          <!-- Casque -->
+          <path d="M -5,-19 Q -4,-27 0,-28 Q 4,-27 5,-19" fill="#1565C0"/>
+          <rect x="-6" y="-20" width="12" height="3" fill="#1565C0" rx="1"/>
+          <!-- Visage souriant -->
+          <circle cx="-1.5" cy="-19" r="0.8" fill="#333"/>
+          <circle cx="1.5" cy="-19" r="0.8" fill="#333"/>
+          <path d="M -1.5,-17 Q 0,-16 1.5,-17" fill="none" stroke="#333" stroke-width="0.8"/>
+          <!-- Piolet -->
+          <line x1="6" y1="-15" x2="13" y2="-24" stroke="#888" stroke-width="1.5"/>
+          <line x1="10" y1="-24" x2="16" y2="-21" stroke="#888" stroke-width="2"/>
+          <line x1="10" y1="-24" x2="9" y2="-19" stroke="#888" stroke-width="1.5"/>
+          <!-- Bras gauche -->
+          <line x1="-5" y1="-12" x2="-10" y2="-8" stroke="#E53935" stroke-width="2"/>
+          <!-- Jambes -->
+          <line x1="-2" y1="-3" x2="-5" y2="4" stroke="#1565C0" stroke-width="2.5"/>
+          <line x1="2" y1="-3" x2="5" y2="4" stroke="#1565C0" stroke-width="2.5"/>
         </g>
-        <!-- Drapeau au sommet (caché jusqu'à la fin) -->
-        <g id="flag" opacity="0">
-          <line x1="200" y1="10" x2="200" y2="-10" stroke="#333" stroke-width="1.5"/>
-          <polygon points="200,-10 215,-5 200,0" fill="#E53935"/>
+
+        <!-- Drapeau au sommet -->
+        <g id="flag" opacity="0" transform="translate(203,30)">
+          <line x1="0" y1="0" x2="0" y2="-18" stroke="#555" stroke-width="1.5"/>
+          <polygon points="0,-18 14,-13 0,-8" fill="#E53935"/>
         </g>
-        <!-- Pourcentage -->
-        <text id="pct-text" x="200" y="142" text-anchor="middle"
-              font-size="11" fill="white" font-weight="bold" font-family="Arial">0%</text>
+
+        <!-- Pourcentage en bas -->
+        <text id="pct-text" x="200" y="176" text-anchor="middle"
+              font-size="11" fill="white" font-weight="bold"
+              font-family="Arial" opacity="0.9">0%</text>
       </svg>
     </div>
 
