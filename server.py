@@ -1625,8 +1625,18 @@ def setup_oauth_callback():
     </a>
 
     <div class="warn">
-      ⚠️ Revenez sur cette page après avoir créé votre projet.<br>
-      Ne fermez pas cet onglet !
+      ⚠️ <strong>Important :</strong> Revenez sur cette page après avoir créé votre projet.<br>
+      Ne fermez pas cet onglet et <strong>n'utilisez pas la flèche retour</strong> du navigateur !
+    </div>
+    <div style="background:#E3F2FD;border-radius:8px;padding:12px;margin-top:8px;font-size:12px;color:#1565C0;text-align:left">
+      <strong>📋 Sur Firebase Console (nouvel onglet) :</strong><br>
+      1. Connectez-vous avec <strong>{gmail}</strong> si demandé<br>
+      2. Cliquez <strong>"Créer un projet"</strong><br>
+      3. Entrez le nom de votre structure → <strong>"Continuer"</strong><br>
+      4. <strong>Désactivez</strong> le toggle <strong>"Gemini/IA"</strong> si présent → <strong>"Continuer"</strong><br>
+      5. <strong>Désactivez</strong> le toggle <strong>"Google Analytics"</strong> → <strong>"Créer le projet"</strong><br>
+      6. Attendez <strong>"Votre nouveau projet est prêt"</strong> → <strong>"Continuer"</strong><br>
+      7. Revenez sur cet onglet et cliquez le bouton vert ci-dessous
     </div>
 
     <button class="btn-done" onclick="validerProjet()">
@@ -1889,7 +1899,8 @@ function poll() {{
         setStep(info[0]);
         setProgress(info[1]);
         document.getElementById("msg").textContent = d.message || "";
-        if (status === "complete") {{
+        if (status === "complete" || status === "firebase_done") {{
+          setProgress(100);
           setTimeout(function() {{ window.location.href = BASE + "/done"; }}, 800);
         }} else if (status === "error") {{
           showError(d.error);
