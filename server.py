@@ -1398,14 +1398,14 @@ def create_structure():
     setup_url = f"{SERVER_BASE_URL}/setup/{token}"
 
     # Répondre immédiatement à l'app, envoyer les emails en arrière-plan
-    def envoyer_emails_async():
-        envoyer_email_setup(gmail, club_name, setup_url)
+    # Notifier l'admin (cp.support.dev) sans bloquer la réponse
+    def notifier_admin():
         envoyer_notification(
-            "🆕 Nouvelle demande de création",
-            f"Structure: {club_name}\nGmail: {gmail}\nToken: {token}"
+            "🆕 Nouvelle structure en cours de création",
+            f"Structure: {club_name}\nGmail: {gmail}\nToken: {token}\nURL setup: {setup_url}"
         )
 
-    threading.Thread(target=envoyer_emails_async, daemon=True).start()
+    threading.Thread(target=notifier_admin, daemon=True).start()
 
     return jsonify({
         "success":   True,
