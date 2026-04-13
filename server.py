@@ -1591,13 +1591,11 @@ def setup_oauth_callback():
                 sess = charger_setup(token)
                 if sess:
                     sauvegarder_setup(token, {**sess, "token_data": token_data, "status": "oauth_done"})
-                    print(f"[OAUTH] Token échangé et sauvegardé pour {token[:8]}...")
-                    # Lancer la configuration Firebase en background
-                    threading.Thread(
-                        target=_configure_firebase_logic,
-                        args=(token, {**sess, "token_data": token_data, "status": "oauth_done"}),
-                        daemon=True
-                    ).start()
+                    print(f"[OAUTH] ✅ Token échangé et sauvegardé pour {token[:8]}... — status=oauth_done")
+                    # ⚠️ NE PAS lancer _configure_firebase_logic ici !
+                    # L'utilisateur doit d'abord créer son projet Firebase.
+                    # La configuration sera lancée par l'app via /setup/TOKEN/configure-firebase
+                    # une fois que l'utilisateur aura créé son projet sur Firebase Console.
             else:
                 print(f"[OAUTH] Erreur échange: {token_data.get('error_description')}")
         except Exception as e:
@@ -2159,21 +2157,18 @@ def setup_ping(token):
     L'app appelle cet endpoint à chaque onResume() pour savoir
     si le statut a changé depuis la dernière vérification.
     Retourne uniquement le statut + un flag "ready" si OAuth est terminé.
-    Pas de données sensibles ici — juste un signal.
     """
     session = charger_setup(token)
     if not session:
         return jsonify({"status": "not_found", "ready": False}), 404
 
     status = session.get("status", "pending")
-    # "ready" = le OAuth est fait, l'app peut avancer
     ready = status in ("oauth_done", "listing", "configuring", "firestore",
                        "rules", "firebase_done", "complete")
     complete = status == "complete"
 
     resp = {"status": status, "ready": ready, "complete": complete}
 
-    # Si complete, inclure les credentials directement
     if complete:
         resp.update({
             "project_id":       session.get("project_id", ""),
@@ -2184,8 +2179,6 @@ def setup_ping(token):
         })
 
     return jsonify(resp)
-
-
 
 
 def _configure_firebase_logic(token, session):
