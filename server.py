@@ -1576,7 +1576,7 @@ def setup_oauth_callback():
     gmail = session.get("gmail", "")
 
     # Échanger immédiatement le code OAuth et sauvegarder le token
-    # pour que l'app puisse lancer la configuration dès qu'elle revient
+    # puis lancer la création complète du projet Firebase en background
     def echanger_oauth_code():
         try:
             token_resp = http_requests.post("https://oauth2.googleapis.com/token", data={
@@ -1591,11 +1591,14 @@ def setup_oauth_callback():
                 sess = charger_setup(token)
                 if sess:
                     sauvegarder_setup(token, {**sess, "token_data": token_data, "status": "oauth_done"})
-                    print(f"[OAUTH] ✅ Token échangé et sauvegardé pour {token[:8]}... — status=oauth_done")
-                    # ⚠️ NE PAS lancer _configure_firebase_logic ici !
-                    # L'utilisateur doit d'abord créer son projet Firebase.
-                    # La configuration sera lancée par l'app via /setup/TOKEN/configure-firebase
-                    # une fois que l'utilisateur aura créé son projet sur Firebase Console.
+                    print(f"[OAUTH] ✅ Token échangé pour {token[:8]}... → lancement création projet")
+                    # Lancer la création complète du projet Firebase en background
+                    # (maintenant _configure_firebase_logic CRÉE le projet au lieu de le chercher)
+                    threading.Thread(
+                        target=_configure_firebase_logic,
+                        args=(token, {**sess, "token_data": token_data, "status": "oauth_done"}),
+                        daemon=True
+                    ).start()
             else:
                 print(f"[OAUTH] Erreur échange: {token_data.get('error_description')}")
         except Exception as e:
@@ -1674,7 +1677,7 @@ def setup_create_firebase(token):
     if not session:
         return jsonify({"error": "Session invalide"}), 404
 
-    if session.get("status") in ("firebase_done", "complete"):
+    if session.get("status") in ("complete",):
         return jsonify({"success": True, "status": session.get("status")})
 
     oauth_code = session.get("oauth_code", "")
@@ -1697,22 +1700,20 @@ def setup_create_firebase(token):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-    # Sauvegarder le token et lancer la configuration en arrière-plan
-    sauvegarder_setup(token, {**session, "token_data": token_data, "status": "listing"})
+    # Sauvegarder le token et lancer la création en arrière-plan
+    sauvegarder_setup(token, {**session, "token_data": token_data, "status": "creating_project"})
 
-    # Lancer configure-firebase automatiquement en background
     def lancer_configuration():
         with app.app_context():
             try:
-                # Appel interne à configure_firebase
-                _configure_firebase_logic(token, {**session, "token_data": token_data, "status": "listing"})
+                _configure_firebase_logic(token, {**session, "token_data": token_data, "status": "creating_project"})
             except Exception as e:
                 import traceback
                 print(f"[CONFIGURE BG] Erreur: {traceback.format_exc()}")
 
     threading.Thread(target=lancer_configuration, daemon=True).start()
 
-    return jsonify({"success": True, "status": "listing"})
+    return jsonify({"success": True, "status": "creating_project"})
 
 
 @app.route("/setup/<token>/configure", methods=["GET"])
@@ -1873,11 +1874,12 @@ function showError(msg) {{
 }}
 
 var STATUS_PROGRESS = {{
-  "listing": [0, 10],
+  "oauth_done": [0, 5],
+  "creating_project": [0, 15],
   "configuring": [1, 35],
-  "firestore": [2, 60],
-  "rules": [3, 80],
-  "firebase_done": [4, 95],
+  "creating_app": [2, 50],
+  "firestore": [2, 65],
+  "api_key": [3, 80],
   "complete": [4, 100]
 }};
 
@@ -1891,12 +1893,12 @@ function poll() {{
     if (xhr.status === 200) {{
       try {{
         var d = JSON.parse(xhr.responseText);
-        var status = d.status || "listing";
+        var status = d.status || "creating_project";
         var info = STATUS_PROGRESS[status] || [0, 10];
         setStep(info[0]);
         setProgress(info[1]);
         document.getElementById("msg").textContent = d.message || "";
-        if (status === "complete" || status === "firebase_done") {{
+        if (status === "complete") {{
           setProgress(100);
           setTimeout(function() {{ window.location.href = BASE + "/done"; }}, 800);
         }} else if (status === "error") {{
@@ -1940,15 +1942,15 @@ def setup_status(token):
 
     status   = session.get("status", "pending")
     messages = {
-        "pending":      "En attente...",
-        "oauth_done":   "Authentification Google réussie !",
-        "listing":      "Recherche de votre projet Firebase...",
-        "configuring":  "Projet trouvé ! Enregistrement de l'application...",
-        "firestore":    "Activation de Firestore en France (europe-west9)...",
-        "rules":        "Finalisation de la configuration...",
-        "firebase_done":"Configuration terminée !",
-        "complete":     "Votre espace est prêt !",
-        "error":        session.get("error", "Erreur inconnue")
+        "pending":          "En attente...",
+        "oauth_done":       "Authentification Google réussie !",
+        "creating_project": "Création de votre projet Google Cloud...",
+        "configuring":      "Activation de Firebase sur votre projet...",
+        "creating_app":     "Enregistrement de l'application Android...",
+        "firestore":        "Activation de Firestore en France (europe-west9)...",
+        "api_key":          "Récupération de la clé API...",
+        "complete":         "Votre espace est prêt !",
+        "error":            session.get("error", "Erreur inconnue")
     }
     return jsonify({
         "status":  status,
@@ -1961,7 +1963,7 @@ def setup_status(token):
 def setup_done_page(token):
     """Étape 6 : Page de définition du mot de passe SU."""
     session = charger_setup(token)
-    if not session or session.get("status") not in ("firebase_done", "complete"):
+    if not session or session.get("status") not in ("complete",):
         return redirect(f"/setup/{token}")
 
     club_name = session.get("club_name", "")
@@ -2154,36 +2156,43 @@ def get_credentials(token):
 def setup_ping(token):
     """
     📬 Endpoint ultra-léger pour l'app Android.
-    L'app appelle cet endpoint à chaque onResume() pour savoir
-    si le statut a changé depuis la dernière vérification.
-    Retourne uniquement le statut + un flag "ready" si OAuth est terminé.
+    L'app appelle cet endpoint à chaque onResume() pour savoir où en est la création.
     """
     session = charger_setup(token)
     if not session:
         return jsonify({"status": "not_found", "ready": False}), 404
 
     status = session.get("status", "pending")
-    ready = status in ("oauth_done", "listing", "configuring", "firestore",
-                       "rules", "firebase_done", "complete")
+    # "ready" = OAuth fait, création en cours ou terminée
+    ready = status in ("oauth_done", "creating_project", "configuring", "creating_app",
+                       "firestore", "api_key", "complete")
     complete = status == "complete"
 
     resp = {"status": status, "ready": ready, "complete": complete}
 
     if complete:
         resp.update({
-            "project_id":       session.get("project_id", ""),
-            "app_id":           session.get("app_id", ""),
-            "api_key":          session.get("api_key", ""),
-            "su_password_hash": session.get("su_password_hash", ""),
-            "club_name":        session.get("club_name", ""),
+            "project_id":          session.get("project_id", ""),
+            "app_id":              session.get("app_id", ""),
+            "api_key":             session.get("api_key", ""),
+            "su_password_hash":    session.get("su_password_hash", ""),
+            "club_name":           session.get("club_name", ""),
+            "is_first_connection": session.get("is_first_connection", True),
         })
 
     return jsonify(resp)
 
 
+
+
 def _configure_firebase_logic(token, session):
-    """Logique de configuration Firebase — appelable en background."""
+    """
+    Crée le projet Firebase de A à Z sur le compte Google de l'utilisateur,
+    puis configure Firestore, l'app Android, et récupère l'API key.
+    Tout est automatique — l'utilisateur n'a jamais besoin d'ouvrir Firebase Console.
+    """
     club_name = session.get("club_name", "")
+    gmail = session.get("gmail", "")
     token_data = session.get("token_data", {})
 
     try:
@@ -2199,52 +2208,48 @@ def _configure_firebase_logic(token, session):
             scopes=GOOGLE_SCOPES
         )
 
-        sauvegarder_setup(token, {**session, "status": "listing"})
+        # === ÉTAPE 1 : Créer le projet Google Cloud ===
+        sauvegarder_setup(token, {**session, "status": "creating_project"})
+        suffix = secrets.token_hex(4)
+        safe_name = "".join(c.lower() if c.isalnum() else "-" for c in club_name)[:20].strip("-")
+        project_id = f"mp-{safe_name}-{suffix}"
+        print(f"[CONFIGURE] 🔨 Création projet GCloud: {project_id}")
 
-        firebase_svc = build("firebase", "v1beta1", credentials=creds)
-        projects_resp = firebase_svc.projects().list().execute()
-        projects = projects_resp.get("results", [])
+        crm = build("cloudresourcemanager", "v1", credentials=creds)
+        crm.projects().create(body={
+            "projectId": project_id,
+            "name": club_name
+        }).execute()
+        print(f"[CONFIGURE] ✅ Projet GCloud créé: {project_id}")
+        time.sleep(8)
 
-        if not projects:
-            sauvegarder_setup(token, {**session, "status": "error",
-                "error": "Aucun projet Firebase trouvé. Avez-vous bien créé un projet ?"})
-            return
-
-        # Trier par date de création — prendre le plus récent
-        def get_create_time(p):
-            return p.get("createTime", "") or ""
-        projects_sorted = sorted(projects, key=get_create_time, reverse=True)
-        projet = projects_sorted[0]
-        project_id = projet.get("projectId", "")
-        print(f"[CONFIGURE] Projet le plus récent: {project_id}")
-
+        # === ÉTAPE 2 : Activer Firebase sur le projet ===
         sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
+        firebase_svc = build("firebase", "v1beta1", credentials=creds)
+        firebase_svc.projects().addFirebase(
+            project=f"projects/{project_id}", body={}
+        ).execute()
+        print(f"[CONFIGURE] ✅ Firebase activé: {project_id}")
+        time.sleep(8)
 
-        # Enregistrer l'app Android
+        # === ÉTAPE 3 : Créer l'app Android ===
+        sauvegarder_setup(token, {**session, "status": "creating_app", "project_id": project_id})
         app_id = ""
         try:
-            apps_resp = firebase_svc.projects().androidApps().list(
+            firebase_svc.projects().androidApps().create(
+                parent=f"projects/{project_id}",
+                body={"packageName": "com.managerpresence", "displayName": club_name}
+            ).execute()
+            time.sleep(6)
+            apps = firebase_svc.projects().androidApps().list(
                 parent=f"projects/{project_id}"
             ).execute()
-            existing = apps_resp.get("apps", [])
-            mp_app = next((a for a in existing if a.get("packageName") == "com.managerpresence"), None)
-            if mp_app:
-                app_id = mp_app.get("appId", "")
-            else:
-                firebase_svc.projects().androidApps().create(
-                    parent=f"projects/{project_id}",
-                    body={"packageName": "com.managerpresence", "displayName": club_name}
-                ).execute()
-                time.sleep(5)
-                apps2 = firebase_svc.projects().androidApps().list(
-                    parent=f"projects/{project_id}"
-                ).execute().get("apps", [])
-                mp2 = next((a for a in apps2 if a.get("packageName") == "com.managerpresence"), None)
-                app_id = mp2.get("appId", "") if mp2 else ""
+            app_id = apps["apps"][0]["appId"] if apps.get("apps") else ""
+            print(f"[CONFIGURE] ✅ App Android créée: {app_id}")
         except Exception as e:
-            print(f"[CONFIGURE] App Android: {e}")
+            print(f"[CONFIGURE] ⚠️ App Android: {e}")
 
-        # Activer Firestore
+        # === ÉTAPE 4 : Activer Firestore en europe-west9 ===
         sauvegarder_setup(token, {**session, "status": "firestore",
             "project_id": project_id, "app_id": app_id})
         try:
@@ -2254,12 +2259,13 @@ def _configure_firebase_logic(token, session):
                 body={"type": "FIRESTORE_NATIVE", "locationId": "europe-west9"},
                 databaseId="(default)"
             ).execute()
-            time.sleep(4)
+            print(f"[CONFIGURE] ✅ Firestore activé: {project_id}")
+            time.sleep(5)
         except Exception as e:
-            print(f"[CONFIGURE] Firestore: {e}")
+            print(f"[CONFIGURE] ⚠️ Firestore: {e}")
 
-        # Récupérer API key
-        sauvegarder_setup(token, {**session, "status": "rules",
+        # === ÉTAPE 5 : Récupérer l'API key ===
+        sauvegarder_setup(token, {**session, "status": "api_key",
             "project_id": project_id, "app_id": app_id})
         api_key = ""
         try:
@@ -2272,25 +2278,47 @@ def _configure_firebase_logic(token, session):
                     name=keys_resp["keys"][0]["name"]
                 ).execute()
                 api_key = key_detail.get("keyString", "")
+                print(f"[CONFIGURE] ✅ API key récupérée")
         except Exception as e:
-            print(f"[CONFIGURE] API key: {e}")
+            print(f"[CONFIGURE] ⚠️ API key: {e}")
 
-        # Créer licence trial
+        # === ÉTAPE 6 : Créer licence trial + finaliser ===
         licence = creer_licence_trial(project_id, club_name)
         sauvegarder_licence(project_id, licence)
 
+        # Mot de passe super-utilisateur générique — l'app forcera le changement à la première connexion
+        su_password = "0000"
+        su_hash = hashlib.sha256(su_password.encode()).hexdigest()
+
         sauvegarder_setup(token, {
             **session,
-            "status":     "firebase_done",
-            "project_id": project_id,
-            "app_id":     app_id,
-            "api_key":    api_key,
+            "status":              "complete",
+            "project_id":          project_id,
+            "app_id":              app_id,
+            "api_key":             api_key,
+            "su_password_hash":    su_hash,
+            "is_first_connection": True,
         })
-        print(f"[CONFIGURE] ✅ Terminé — project_id={project_id}")
+        print(f"[CONFIGURE] 🎉 Terminé ! project_id={project_id}, app_id={app_id}")
+
+        # Envoyer email de confirmation (sans mot de passe, il le choisira lui-même)
+        try:
+            envoyer_email_confirmation(gmail, club_name, su_password)
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Email confirmation: {e}")
+
+        # Notifier l'admin
+        try:
+            envoyer_notification(
+                "✅ Structure créée avec succès",
+                f"Structure: {club_name}\nGmail: {gmail}\nProject: {project_id}\nApp: {app_id}"
+            )
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Notification admin: {e}")
 
     except Exception as e:
         import traceback
-        print(f"[CONFIGURE] Erreur: {traceback.format_exc()}")
+        print(f"[CONFIGURE] ❌ Erreur: {traceback.format_exc()}")
         sauvegarder_setup(token, {**session, "status": "error", "error": str(e)})
 
 
@@ -2300,7 +2328,7 @@ def configure_firebase(token):
     session = charger_setup(token)
     if not session:
         return jsonify({"error": "Session invalide"}), 404
-    if session.get("status") in ("firebase_done", "complete"):
+    if session.get("status") in ("complete",):
         return jsonify({"success": True})
     token_data = session.get("token_data", {})
     if not token_data:
