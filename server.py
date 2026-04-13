@@ -2152,6 +2152,40 @@ def get_credentials(token):
     })
 
 
+@app.route("/setup/<token>/ping", methods=["GET"])
+def setup_ping(token):
+    """
+    📬 Endpoint ultra-léger pour l'app Android.
+    L'app appelle cet endpoint à chaque onResume() pour savoir
+    si le statut a changé depuis la dernière vérification.
+    Retourne uniquement le statut + un flag "ready" si OAuth est terminé.
+    Pas de données sensibles ici — juste un signal.
+    """
+    session = charger_setup(token)
+    if not session:
+        return jsonify({"status": "not_found", "ready": False}), 404
+
+    status = session.get("status", "pending")
+    # "ready" = le OAuth est fait, l'app peut avancer
+    ready = status in ("oauth_done", "listing", "configuring", "firestore",
+                       "rules", "firebase_done", "complete")
+    complete = status == "complete"
+
+    resp = {"status": status, "ready": ready, "complete": complete}
+
+    # Si complete, inclure les credentials directement
+    if complete:
+        resp.update({
+            "project_id":       session.get("project_id", ""),
+            "app_id":           session.get("app_id", ""),
+            "api_key":          session.get("api_key", ""),
+            "su_password_hash": session.get("su_password_hash", ""),
+            "club_name":        session.get("club_name", ""),
+        })
+
+    return jsonify(resp)
+
+
 
 
 def _configure_firebase_logic(token, session):
