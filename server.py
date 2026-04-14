@@ -2300,6 +2300,29 @@ service cloud.firestore {
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Règles Firestore: {e}")
 
+        # === ÉTAPE 4c : Activer l'authentification anonyme ===
+        try:
+            # Utiliser l'API Identity Toolkit pour activer l'auth anonyme
+            identity_svc = build("identitytoolkit", "v2", credentials=creds)
+            # Récupérer la config actuelle
+            try:
+                config = identity_svc.projects().tenants()  # Test si ça marche
+            except Exception:
+                pass
+            # Activer via l'API REST directement
+            import json as json_module
+            auth_url = f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/config"
+            headers_auth = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+            auth_body = {"signIn": {"anonymous": {"enabled": True}}}
+            auth_resp = http_requests.patch(auth_url, headers=headers_auth,
+                json=auth_body, params={"updateMask": "signIn.anonymous.enabled"})
+            if auth_resp.status_code == 200:
+                print(f"[CONFIGURE] ✅ Auth anonyme activée")
+            else:
+                print(f"[CONFIGURE] ⚠️ Auth anonyme: {auth_resp.status_code} {auth_resp.text[:200]}")
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Auth anonyme: {e}")
+
         # === ÉTAPE 5 : Récupérer l'API key ===
         sauvegarder_setup(token, {**session, "status": "api_key",
             "project_id": project_id, "app_id": app_id})
