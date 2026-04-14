@@ -2264,6 +2264,42 @@ def _configure_firebase_logic(token, session):
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Firestore: {e}")
 
+        # === ÉTAPE 4b : Configurer les règles de sécurité Firestore ===
+        try:
+            firestore_rules = """rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}"""
+            rules_svc = build("firebaserules", "v1", credentials=creds)
+            # Créer la release avec les règles
+            ruleset = rules_svc.projects().rulesets().create(
+                name=f"projects/{project_id}",
+                body={
+                    "source": {
+                        "files": [{
+                            "name": "firestore.rules",
+                            "content": firestore_rules
+                        }]
+                    }
+                }
+            ).execute()
+            ruleset_name = ruleset.get("name", "")
+            if ruleset_name:
+                rules_svc.projects().releases().create(
+                    name=f"projects/{project_id}",
+                    body={
+                        "name": f"projects/{project_id}/releases/cloud.firestore",
+                        "rulesetName": ruleset_name
+                    }
+                ).execute()
+                print(f"[CONFIGURE] ✅ Règles Firestore configurées")
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Règles Firestore: {e}")
+
         # === ÉTAPE 5 : Récupérer l'API key ===
         sauvegarder_setup(token, {**session, "status": "api_key",
             "project_id": project_id, "app_id": app_id})
