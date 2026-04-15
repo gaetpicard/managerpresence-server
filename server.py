@@ -1331,7 +1331,32 @@ def creer_projet_firebase(token_data, club_name, gmail):
         except Exception as e:
             print(f"[FIREBASE] Firestore (déjà actif ou erreur mineure): {e}")
 
-        # 6. Récupérer l'API key
+        # 6. Activer l'authentification Anonymous + Email/Password
+        try:
+            auth_url = f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/config"
+            headers_auth = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+
+            # Auth anonyme
+            auth_resp = http_requests.patch(auth_url, headers=headers_auth,
+                json={"signIn": {"anonymous": {"enabled": True}}},
+                params={"updateMask": "signIn.anonymous.enabled"})
+            if auth_resp.status_code == 200:
+                print(f"[FIREBASE] ✅ Auth anonyme activée")
+            else:
+                print(f"[FIREBASE] ⚠️ Auth anonyme: {auth_resp.status_code} {auth_resp.text[:200]}")
+
+            # Auth Email/Password
+            auth_resp_email = http_requests.patch(auth_url, headers=headers_auth,
+                json={"signIn": {"email": {"enabled": True, "passwordRequired": True}}},
+                params={"updateMask": "signIn.email.enabled"})
+            if auth_resp_email.status_code == 200:
+                print(f"[FIREBASE] ✅ Auth Email/Password activée")
+            else:
+                print(f"[FIREBASE] ⚠️ Auth Email/Password: {auth_resp_email.status_code} {auth_resp_email.text[:200]}")
+        except Exception as e:
+            print(f"[FIREBASE] ⚠️ Auth: {e}")
+
+        # 7. Récupérer l'API key
         api_key = ""
         try:
             keys_svc  = build("apikeys", "v2", credentials=creds)
@@ -2183,8 +2208,6 @@ def setup_ping(token):
     return jsonify(resp)
 
 
-
-
 def _configure_firebase_logic(token, session):
     """
     Crée le projet Firebase de A à Z sur le compte Google de l'utilisateur,
@@ -2275,7 +2298,6 @@ service cloud.firestore {
   }
 }"""
             rules_svc = build("firebaserules", "v1", credentials=creds)
-            # Créer la release avec les règles
             ruleset = rules_svc.projects().rulesets().create(
                 name=f"projects/{project_id}",
                 body={
@@ -2300,28 +2322,30 @@ service cloud.firestore {
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Règles Firestore: {e}")
 
-        # === ÉTAPE 4c : Activer l'authentification anonyme ===
+        # === ÉTAPE 4c : Activer l'authentification Anonymous + Email/Password ===
         try:
-            # Utiliser l'API Identity Toolkit pour activer l'auth anonyme
-            identity_svc = build("identitytoolkit", "v2", credentials=creds)
-            # Récupérer la config actuelle
-            try:
-                config = identity_svc.projects().tenants()  # Test si ça marche
-            except Exception:
-                pass
-            # Activer via l'API REST directement
-            import json as json_module
             auth_url = f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/config"
             headers_auth = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
-            auth_body = {"signIn": {"anonymous": {"enabled": True}}}
+
+            # Auth anonyme
             auth_resp = http_requests.patch(auth_url, headers=headers_auth,
-                json=auth_body, params={"updateMask": "signIn.anonymous.enabled"})
+                json={"signIn": {"anonymous": {"enabled": True}}},
+                params={"updateMask": "signIn.anonymous.enabled"})
             if auth_resp.status_code == 200:
                 print(f"[CONFIGURE] ✅ Auth anonyme activée")
             else:
                 print(f"[CONFIGURE] ⚠️ Auth anonyme: {auth_resp.status_code} {auth_resp.text[:200]}")
+
+            # Auth Email/Password  ← CORRECTION : manquait dans l'original
+            auth_resp_email = http_requests.patch(auth_url, headers=headers_auth,
+                json={"signIn": {"email": {"enabled": True, "passwordRequired": True}}},
+                params={"updateMask": "signIn.email.enabled"})
+            if auth_resp_email.status_code == 200:
+                print(f"[CONFIGURE] ✅ Auth Email/Password activée")
+            else:
+                print(f"[CONFIGURE] ⚠️ Auth Email/Password: {auth_resp_email.status_code} {auth_resp_email.text[:200]}")
         except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Auth anonyme: {e}")
+            print(f"[CONFIGURE] ⚠️ Auth: {e}")
 
         # === ÉTAPE 5 : Récupérer l'API key ===
         sauvegarder_setup(token, {**session, "status": "api_key",
