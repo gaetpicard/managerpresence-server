@@ -23,6 +23,8 @@ import hashlib
 import urllib.parse
 import time
 import requests as http_requests
+import unicodedata
+import re
 
 app = Flask(__name__)
 CORS(app)
@@ -1243,14 +1245,15 @@ def _configure_firebase_logic(token, session):
         # === ÉTAPE 1 : Créer le projet Google Cloud ===
         sauvegarder_setup(token, {**session, "status": "creating_project"})
         suffix = secrets.token_hex(4)
-        safe_name = "".join(c.lower() if c.isalnum() else "-" for c in club_name)[:20].strip("-")
+        normalized = unicodedata.normalize('NFKD', club_name).encode('ascii', 'ignore').decode('ascii')
+        safe_name = re.sub(r'-+', '-', "".join(c.lower() if c.isalnum() else "-" for c in normalized)).strip('-')[:20].strip('-')
         project_id = f"mp-{safe_name}-{suffix}"
         print(f"[CONFIGURE] 🔨 Création projet GCloud: {project_id}")
 
         crm = build("cloudresourcemanager", "v1", credentials=creds)
         crm.projects().create(body={
             "projectId": project_id,
-            "name": club_name
+            "name": club_name[:30]
         }).execute()
         print(f"[CONFIGURE] ✅ Projet GCloud créé: {project_id}")
         time.sleep(8)
