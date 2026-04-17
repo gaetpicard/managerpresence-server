@@ -23,8 +23,6 @@ import hashlib
 import urllib.parse
 import time
 import requests as http_requests
-import unicodedata
-import re
 
 app = Flask(__name__)
 CORS(app)
@@ -361,7 +359,7 @@ def index():
     return jsonify({
         "service": "ManagerPresence License Server",
         "status": "ok",
-        "version": "2.0.3",
+        "version": "2.0.1",
         "timestamp": datetime.now().isoformat()
     })
 
@@ -478,6 +476,17 @@ def stripe_prices():
 
 @app.route("/stripe/checkout", methods=["POST"])
 def stripe_checkout():
+    """
+    Crée une session Stripe Checkout pour un abonnement.
+    
+    Body JSON attendu:
+    {
+        "projectId": "presence-en-cours",
+        "priceId": "price_xxx",
+        "email": "client@example.com",
+        "nomStructure": "École Vilpy"
+    }
+    """
     data = request.get_json() or {}
     
     project_id = data.get("projectId", "").strip()
@@ -488,16 +497,19 @@ def stripe_checkout():
     if not project_id or not price_id:
         return jsonify({"error": "projectId et priceId requis"}), 400
     
+    # Vérifier que le prix est valide
     valid_prices = list(STRIPE_PRICES.values())
     if price_id not in valid_prices:
         return jsonify({"error": "Prix invalide"}), 400
     
+    # Charger ou créer la licence
     licence = charger_licence(project_id)
     if licence is None:
         licence = creer_licence_trial(project_id, nom_structure)
         sauvegarder_licence(project_id, licence)
     
     try:
+        # Créer ou récupérer le client Stripe
         customer_id = licence.get("stripeCustomerId")
         
         if not customer_id:
@@ -512,6 +524,7 @@ def stripe_checkout():
             licence["stripeCustomerId"] = customer_id
             sauvegarder_licence(project_id, licence)
         
+        # Créer la session Checkout
         checkout_session = stripe.checkout.Session.create(
             customer=customer_id,
             payment_method_types=["card"],
@@ -536,6 +549,15 @@ def stripe_checkout():
 
 @app.route("/stripe/portal", methods=["POST"])
 def stripe_portal():
+    """
+    Crée une session vers le portail client Stripe.
+    Permet au client de gérer son abonnement (annuler, changer de carte, etc.)
+    
+    Body JSON attendu:
+    {
+        "projectId": "presence-en-cours"
+    }
+    """
     data = request.get_json() or {}
     project_id = data.get("projectId", "").strip()
     
@@ -564,6 +586,10 @@ def stripe_portal():
 
 @app.route("/stripe/webhook", methods=["POST"])
 def stripe_webhook():
+    """
+    Webhook Stripe pour recevoir les événements de paiement.
+    Configure cette URL dans Stripe Dashboard: https://managerpresence-server.onrender.com/stripe/webhook
+    """
     payload = request.get_data(as_text=True)
     sig_header = request.headers.get("Stripe-Signature", "")
     
@@ -640,6 +666,7 @@ def stripe_webhook():
     return jsonify({"received": True})
 
 def handle_subscription_created(project_id, subscription_id, customer_id):
+    """Gère la création d'un nouvel abonnement"""
     print(f"[STRIPE] Nouvel abonnement pour {project_id}: {subscription_id}")
     
     try:
@@ -679,6 +706,7 @@ def handle_subscription_created(project_id, subscription_id, customer_id):
         print(f"Erreur handle_subscription_created: {e}")
 
 def handle_subscription_updated(project_id, subscription):
+    """Gère les modifications d'abonnement"""
     print(f"[STRIPE] Abonnement mis à jour pour {project_id}")
     
     try:
@@ -717,6 +745,7 @@ def handle_subscription_updated(project_id, subscription):
         print(f"Erreur handle_subscription_updated: {e}")
 
 def handle_subscription_cancelled(project_id):
+    """Gère l'annulation d'abonnement"""
     print(f"[STRIPE] Abonnement annulé pour {project_id}")
     
     licence = charger_licence(project_id)
@@ -731,6 +760,7 @@ def handle_subscription_cancelled(project_id):
         )
 
 def handle_payment_succeeded(project_id, subscription):
+    """Gère le renouvellement réussi"""
     print(f"[STRIPE] Paiement réussi pour {project_id}")
     
     licence = charger_licence(project_id)
@@ -743,6 +773,7 @@ def handle_payment_succeeded(project_id, subscription):
         sauvegarder_licence(project_id, licence)
 
 def handle_payment_failed(project_id, customer_email):
+    """Gère un échec de paiement"""
     print(f"[STRIPE] Paiement échoué pour {project_id}")
     
     licence = charger_licence(project_id)
@@ -761,6 +792,10 @@ def handle_payment_failed(project_id, customer_email):
 
 @app.route("/pwa/generate", methods=["POST"])
 def pwa_generate():
+    """
+    Génère et stocke un code PWA temporaire.
+    Appelé par l'app Android quand un admin génère un code.
+    """
     data = request.get_json() or {}
     
     required_fields = ["projectId", "code", "firebaseConfig"]
@@ -814,6 +849,10 @@ def pwa_generate():
 
 @app.route("/pwa/verify", methods=["POST"])
 def pwa_verify():
+    """
+    Vérifie un code PWA et retourne la config Firebase si valide.
+    Appelé par la PWA quand un utilisateur entre un code.
+    """
     data = request.get_json() or {}
     code = data.get("code", "").strip().upper()
     
@@ -855,6 +894,10 @@ def pwa_verify():
 
 @app.route("/pwa/status/<code>", methods=["GET"])
 def pwa_status(code):
+    """
+    Vérifie le statut d'un code PWA (pour l'app Android).
+    Permet de savoir si le code a été utilisé.
+    """
     code = code.upper()
     pwa_data = charger_pwa_code(code)
     
@@ -892,6 +935,7 @@ def verifier_admin():
 
 @app.route("/admin/liste", methods=["GET"])
 def admin_liste():
+    """Liste toutes les licences"""
     if not verifier_admin():
         return jsonify({"error": "Non autorisé"}), 401
     
@@ -903,6 +947,7 @@ def admin_liste():
 
 @app.route("/admin/gencode", methods=["POST"])
 def admin_gencode():
+    """Génère un nouveau code d'activation"""
     if not verifier_admin():
         return jsonify({"error": "Non autorisé"}), 401
     
@@ -935,6 +980,7 @@ def admin_gencode():
 
 @app.route("/admin/codes", methods=["GET"])
 def admin_codes():
+    """Liste tous les codes"""
     if not verifier_admin():
         return jsonify({"error": "Non autorisé"}), 401
     
@@ -946,6 +992,7 @@ def admin_codes():
 
 @app.route("/admin/pwa-codes", methods=["GET"])
 def admin_pwa_codes():
+    """Liste tous les codes PWA actifs (admin)"""
     if not verifier_admin():
         return jsonify({"error": "Non autorisé"}), 401
     
@@ -974,6 +1021,7 @@ def admin_pwa_codes():
 
 @app.route("/licence/<project_id>", methods=["POST"])
 def admin_update_licence(project_id):
+    """Met à jour une licence (admin)"""
     if not verifier_admin():
         return jsonify({"error": "Non autorisé"}), 401
     
@@ -1022,6 +1070,7 @@ def admin_update_licence(project_id):
 
 @app.route("/admin/licence/<project_id>", methods=["PUT"])
 def admin_edit_licence(project_id):
+    """Modifie une licence existante (admin) - endpoint dédié"""
     if not verifier_admin():
         return jsonify({"error": "Non autorisé"}), 401
     
@@ -1052,6 +1101,7 @@ def admin_edit_licence(project_id):
     
     sauvegarder_licence(project_id, licence)
     
+    # Log console au lieu d'email (évite le timeout SMTP)
     print(f"[ADMIN] Licence modifiée: {project_id} -> plan={licence.get('plan')}, expiration={licence.get('dateExpiration')}")
     
     return jsonify({"success": True, "licence": formater_licence_response(licence)})
@@ -1187,6 +1237,7 @@ def envoyer_email_confirmation(gmail, club_name, su_password):
     ManagerPresence — Données hébergées en France (Firebase europe-west9)
   </p>
 </body></html>"""
+        import urllib.request
         payload = json.dumps({
             "sender": {"name": "ManagerPresence", "email": "cp.support.dev@gmail.com"},
             "to": [{"email": gmail}],
@@ -1212,29 +1263,18 @@ def envoyer_email_confirmation(gmail, club_name, su_password):
         return False
 
 
-def _configure_firebase_logic(token, session):
+def creer_projet_firebase(token_data, club_name, gmail):
     """
-    Crée le projet Firebase de A à Z sur le compte Google de l'utilisateur,
-    puis configure Firestore, l'app Android, et récupère l'API key.
-    Tout est automatique — l'utilisateur n'a jamais besoin d'ouvrir Firebase Console.
-
-    FIXES v2.0.2 :
-    - Délai augmenté après addFirebase() : 30s au lieu de 8s
-      → Firebase Auth n'est pas disponible immédiatement après activation
-    - Auth Email/Password activée en plus de l'anonyme
-    - Suppression de l'envoi d'email confirmation ici
-      → L'email est envoyé uniquement depuis setup_finalize() avec le vrai mot de passe
+    Crée un projet Firebase sur le compte Google de l'utilisateur
+    via les APIs Google Cloud avec son access_token OAuth.
+    Retourne dict(project_id, app_id, api_key) ou None si erreur.
     """
-    club_name = session.get("club_name", "")
-    gmail = session.get("gmail", "")
-    token_data = session.get("token_data", {})
-
     try:
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
         creds = Credentials(
-            token=token_data.get("access_token", ""),
+            token=token_data["access_token"],
             refresh_token=token_data.get("refresh_token"),
             token_uri="https://oauth2.googleapis.com/token",
             client_id=GOOGLE_CLIENT_ID,
@@ -1242,219 +1282,79 @@ def _configure_firebase_logic(token, session):
             scopes=GOOGLE_SCOPES
         )
 
-        # === ÉTAPE 1 : Créer le projet Google Cloud ===
-        sauvegarder_setup(token, {**session, "status": "creating_project"})
-        suffix = secrets.token_hex(4)
-        normalized = unicodedata.normalize('NFKD', club_name).encode('ascii', 'ignore').decode('ascii')
-        safe_name = re.sub(r'-+', '-', "".join(c.lower() if c.isalnum() else "-" for c in normalized)).strip('-')[:20].strip('-')
+        # 1. Générer un project_id unique
+        suffix    = secrets.token_hex(4)
+        safe_name = "".join(c.lower() if c.isalnum() else "-" for c in club_name)[:20].strip("-")
         project_id = f"mp-{safe_name}-{suffix}"
-        print(f"[CONFIGURE] 🔨 Création projet GCloud: {project_id}")
 
+        # 2. Créer le projet Google Cloud
         crm = build("cloudresourcemanager", "v1", credentials=creds)
         crm.projects().create(body={
             "projectId": project_id,
-            "name": club_name[:30]
+            "name":      club_name
         }).execute()
-        print(f"[CONFIGURE] ✅ Projet GCloud créé: {project_id}")
+        print(f"[FIREBASE] Projet GCloud créé: {project_id}")
+        time.sleep(6)
+
+        # 3. Activer Firebase sur ce projet
+        firebase_svc = build("firebase", "v1beta1", credentials=creds)
+        firebase_svc.projects().addFirebase(
+            project=f"projects/{project_id}", body={}
+        ).execute()
+        print(f"[FIREBASE] Firebase activé: {project_id}")
         time.sleep(8)
 
-        # === ÉTAPE 1b : Activer les APIs nécessaires sur le projet ===
-        # FIX 403 : addFirebase échoue si l'API firebase.googleapis.com
-        # n'est pas activée sur le projet GCloud fraîchement créé.
-        sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
+        # 4. Créer l'app Android
+        firebase_svc.projects().androidApps().create(
+            parent=f"projects/{project_id}",
+            body={"packageName": "com.managerpresence", "displayName": club_name}
+        ).execute()
+        time.sleep(6)
+
+        # Récupérer l'app_id
+        apps   = firebase_svc.projects().androidApps().list(
+            parent=f"projects/{project_id}"
+        ).execute()
+        app_id = apps["apps"][0]["appId"] if apps.get("apps") else ""
+        print(f"[FIREBASE] App Android: {app_id}")
+
+        # 5. Activer Firestore en europe-west9
+        fs_svc = build("firestore", "v1", credentials=creds)
         try:
-            su_svc = build("serviceusage", "v1", credentials=creds)
-            apis_a_activer = [
-                "firebase.googleapis.com",
-                "firestore.googleapis.com",
-                "identitytoolkit.googleapis.com",
-            ]
-            for api in apis_a_activer:
-                try:
-                    su_svc.services().enable(
-                        name=f"projects/{project_id}/services/{api}"
-                    ).execute()
-                    print(f"[CONFIGURE] ✅ API activée: {api}")
-                except Exception as e:
-                    print(f"[CONFIGURE] ⚠️ Activation {api}: {e}")
-            # Laisser le temps aux APIs de se propager
-            time.sleep(15)
-        except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Service Usage: {e}")
-            time.sleep(10)
-
-        # === ÉTAPE 2 : Activer Firebase sur le projet ===
-        firebase_svc = build("firebase", "v1beta1", credentials=creds)
-        # Retry loop : addFirebase peut échouer si les APIs ne sont pas encore propagées
-        firebase_active = False
-        for attempt in range(5):
-            try:
-                firebase_svc.projects().addFirebase(
-                    project=f"projects/{project_id}", body={}
-                ).execute()
-                print(f"[CONFIGURE] ✅ Firebase activé: {project_id} (tentative {attempt + 1}/5)")
-                firebase_active = True
-                break
-            except Exception as e:
-                print(f"[CONFIGURE] ⏳ addFirebase tentative {attempt + 1}/5: {e}")
-                time.sleep(10)
-
-        if not firebase_active:
-            raise Exception("Impossible d'activer Firebase sur le projet après 5 tentatives — vérifiez les permissions OAuth")
-
-        # Délai après addFirebase : Auth prend 30s à s'initialiser sur un nouveau projet
-        time.sleep(30)
-
-        # === ÉTAPE 3 : Créer l'app Android ===
-        sauvegarder_setup(token, {**session, "status": "creating_app", "project_id": project_id})
-        app_id = ""
-        try:
-            firebase_svc.projects().androidApps().create(
-                parent=f"projects/{project_id}",
-                body={"packageName": "com.managerpresence", "displayName": club_name}
-            ).execute()
-            # Retry loop : l'app peut mettre jusqu'à 30s à apparaître dans la liste
-            for attempt in range(8):
-                time.sleep(5)
-                apps = firebase_svc.projects().androidApps().list(
-                    parent=f"projects/{project_id}"
-                ).execute()
-                app_id = apps["apps"][0]["appId"] if apps.get("apps") else ""
-                if app_id:
-                    print(f"[CONFIGURE] ✅ App Android créée: {app_id} (tentative {attempt + 1}/8)")
-                    break
-                print(f"[CONFIGURE] ⏳ App Android pas encore prête, tentative {attempt + 1}/8...")
-            if not app_id:
-                print(f"[CONFIGURE] ⚠️ App Android: app_id toujours vide après 8 tentatives")
-        except Exception as e:
-            print(f"[CONFIGURE] ⚠️ App Android: {e}")
-
-        # === ÉTAPE 4 : Activer Firestore en europe-west9 ===
-        sauvegarder_setup(token, {**session, "status": "firestore",
-            "project_id": project_id, "app_id": app_id})
-        try:
-            fs_svc = build("firestore", "v1", credentials=creds)
             fs_svc.projects().databases().create(
                 parent=f"projects/{project_id}",
                 body={"type": "FIRESTORE_NATIVE", "locationId": "europe-west9"},
                 databaseId="(default)"
             ).execute()
-            print(f"[CONFIGURE] ✅ Firestore activé: {project_id}")
+            print(f"[FIREBASE] Firestore activé: {project_id}")
             time.sleep(5)
         except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Firestore: {e}")
+            print(f"[FIREBASE] Firestore (déjà actif ou erreur mineure): {e}")
 
-        # === ÉTAPE 4b : Configurer les règles de sécurité Firestore ===
-        try:
-            firestore_rules = """rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
-    }
-  }
-}"""
-            rules_svc = build("firebaserules", "v1", credentials=creds)
-            ruleset = rules_svc.projects().rulesets().create(
-                name=f"projects/{project_id}",
-                body={
-                    "source": {
-                        "files": [{
-                            "name": "firestore.rules",
-                            "content": firestore_rules
-                        }]
-                    }
-                }
-            ).execute()
-            ruleset_name = ruleset.get("name", "")
-            if ruleset_name:
-                rules_svc.projects().releases().create(
-                    name=f"projects/{project_id}",
-                    body={
-                        "name": f"projects/{project_id}/releases/cloud.firestore",
-                        "rulesetName": ruleset_name
-                    }
-                ).execute()
-                print(f"[CONFIGURE] ✅ Règles Firestore configurées")
-        except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Règles Firestore: {e}")
-
-        # === ÉTAPE 4c : Activer l'authentification (anonyme + Email/Password) ===
-        # FIX: ajout de l'auth Email/Password — nécessaire pour les admins ManagerPresence
-        try:
-            auth_url = f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/config"
-            headers_auth = {
-                "Authorization": f"Bearer {creds.token}",
-                "Content-Type": "application/json"
-            }
-            auth_body = {
-                "signIn": {
-                    "anonymous": {"enabled": True},
-                    "email": {"enabled": True, "passwordRequired": True}
-                }
-            }
-            auth_resp = http_requests.patch(
-                auth_url,
-                headers=headers_auth,
-                json=auth_body,
-                params={"updateMask": "signIn.anonymous.enabled,signIn.email.enabled,signIn.email.passwordRequired"}
-            )
-            if auth_resp.status_code == 200:
-                print(f"[CONFIGURE] ✅ Auth anonyme + Email/Password activée")
-            else:
-                print(f"[CONFIGURE] ⚠️ Auth: {auth_resp.status_code} {auth_resp.text[:200]}")
-        except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Auth: {e}")
-
-        # === ÉTAPE 5 : Récupérer l'API key ===
-        sauvegarder_setup(token, {**session, "status": "api_key",
-            "project_id": project_id, "app_id": app_id})
+        # 6. Récupérer l'API key
         api_key = ""
         try:
-            keys_svc = build("apikeys", "v2", credentials=creds)
+            keys_svc  = build("apikeys", "v2", credentials=creds)
             keys_resp = keys_svc.projects().locations().keys().list(
                 parent=f"projects/{project_id}/locations/global"
             ).execute()
             if keys_resp.get("keys"):
+                key_name   = keys_resp["keys"][0]["name"]
                 key_detail = keys_svc.projects().locations().keys().getKeyString(
-                    name=keys_resp["keys"][0]["name"]
+                    name=key_name
                 ).execute()
                 api_key = key_detail.get("keyString", "")
-                print(f"[CONFIGURE] ✅ API key récupérée")
         except Exception as e:
-            print(f"[CONFIGURE] ⚠️ API key: {e}")
+            print(f"[FIREBASE] Récupération API key: {e}")
 
-        # === ÉTAPE 6 : Créer licence trial + marquer comme complete ===
-        # FIX: on ne génère plus de mot de passe ici, ni d'email de confirmation.
-        # Le mot de passe SU est choisi par l'utilisateur dans setup_finalize(),
-        # qui envoie lui-même l'email de confirmation avec le vrai mot de passe.
-        licence = creer_licence_trial(project_id, club_name)
-        sauvegarder_licence(project_id, licence)
-
-        sauvegarder_setup(token, {
-            **session,
-            "status":              "complete",
-            "project_id":          project_id,
-            "app_id":              app_id,
-            "api_key":             api_key,
-            "is_first_connection": True,
-            # su_password_hash sera défini par setup_finalize()
-        })
-        print(f"[CONFIGURE] 🎉 Terminé ! project_id={project_id}, app_id={app_id}")
-
-        # Notifier l'admin (sans mot de passe — il n'est pas encore défini)
-        try:
-            envoyer_notification(
-                "✅ Structure créée avec succès",
-                f"Structure: {club_name}\nGmail: {gmail}\nProject: {project_id}\nApp: {app_id}\n\n(Le mot de passe SU sera défini par l'utilisateur à l'étape suivante)"
-            )
-        except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Notification admin: {e}")
+        print(f"[FIREBASE] Création terminée — project_id={project_id}")
+        return {"project_id": project_id, "app_id": app_id, "api_key": api_key}
 
     except Exception as e:
+        print(f"[FIREBASE] Erreur création: {e}")
         import traceback
-        print(f"[CONFIGURE] ❌ Erreur: {traceback.format_exc()}")
-        sauvegarder_setup(token, {**session, "status": "error", "error": str(e)})
+        traceback.print_exc()
+        return None
 
 
 # ============================================================
@@ -1463,6 +1363,10 @@ service cloud.firestore {
 
 @app.route("/create-structure", methods=["POST"])
 def create_structure():
+    """
+    Étape 1 : L'app Android initie la création.
+    Body: { "club_name": str, "gmail": str }
+    """
     data      = request.get_json() or {}
     club_name = data.get("club_name", "").strip()
     gmail     = data.get("gmail", "").strip().lower()
@@ -1493,6 +1397,8 @@ def create_structure():
 
     setup_url = f"{SERVER_BASE_URL}/setup/{token}"
 
+    # Répondre immédiatement à l'app, envoyer les emails en arrière-plan
+    # Envoyer email à l'utilisateur + notifier l'admin
     def envoyer_emails():
         envoyer_email_setup(gmail, club_name, setup_url)
         envoyer_notification(
@@ -1512,6 +1418,7 @@ def create_structure():
 
 @app.route("/setup/<token>", methods=["GET"])
 def setup_page(token):
+    """Étape 2 : Page HTML affichée quand l'utilisateur clique le lien email."""
     session = charger_setup(token)
 
     if not session:
@@ -1597,6 +1504,7 @@ def setup_page(token):
       puis révocable depuis votre compte Google à tout moment.<br><br>
       <a href="/privacy" target="_blank" style="color:#1565C0">📄 Politique de confidentialité complète</a>
     </div>
+
     <p style="color:#555;font-size:13px;margin-bottom:12px">
       Sur l'écran suivant, Google vous demandera d'autoriser ces deux accès — cochez les deux :
     </p>
@@ -1604,6 +1512,7 @@ def setup_page(token):
       🔥 <strong>Afficher et administrer Firebase</strong> — pour créer votre projet<br>
       ☁️ <strong>Voir et configurer Google Cloud</strong> — pour activer Firestore
     </div>
+
     <a class="btn" href="/setup/{token}/oauth">
       <svg width="20" height="20" viewBox="0 0 24 24">
         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -1624,6 +1533,7 @@ def setup_page(token):
 
 @app.route("/setup/<token>/oauth", methods=["GET"])
 def setup_oauth_redirect(token):
+    """Étape 3 : Redirige vers Google OAuth."""
     session = charger_setup(token)
     if not session:
         return "Session invalide", 404
@@ -1646,6 +1556,7 @@ def setup_oauth_redirect(token):
 
 @app.route("/setup/oauth/callback", methods=["GET"])
 def setup_oauth_callback():
+    """Étape 4 : Callback OAuth — affiche page pour créer le projet Firebase manuellement."""
     code  = request.args.get("code", "")
     token = request.args.get("state", "")
     error = request.args.get("error", "")
@@ -1664,6 +1575,8 @@ def setup_oauth_callback():
     club_name = session.get("club_name", "")
     gmail = session.get("gmail", "")
 
+    # Échanger immédiatement le code OAuth et sauvegarder le token
+    # pour que l'app puisse lancer la configuration dès qu'elle revient
     def echanger_oauth_code():
         try:
             token_resp = http_requests.post("https://oauth2.googleapis.com/token", data={
@@ -1700,6 +1613,7 @@ def setup_oauth_callback():
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Authentification réussie — ManagerPresence</title>
+  <title>Authentification réussie — ManagerPresence</title>
   <style>
     *{{box-sizing:border-box;margin:0;padding:0}}
     body{{font-family:Arial,sans-serif;background:#F5F5F5;min-height:100vh;
@@ -1720,11 +1634,11 @@ def setup_oauth_callback():
     <h2 style="color:#2E7D32;margin-bottom:8px">Compte Google connecté !</h2>
     <p style="color:#555;font-size:14px;margin-bottom:16px">
       Bonjour <strong>{gmail}</strong><br>
-      Création de votre espace Firebase en cours...
+      Il reste une étape : créer votre projet Firebase.
     </p>
     <div class="info">
       📱 <strong>Retournez dans l'application ManagerPresence</strong><br>
-      Elle vous guidera pour finaliser la configuration.
+      Elle vous guidera pour créer votre projet Firebase.
     </div>
     <a class="btn-app" href="{deep_link}">
       📱 Retourner dans l'app →
@@ -1733,6 +1647,12 @@ def setup_oauth_callback():
       Si le bouton ne fonctionne pas, revenez manuellement dans l'app.<br>
       Elle reprendra automatiquement.
     </p>
+    <div class="steps">
+      <strong>📋 Ce qui vous attend dans l'app :</strong><br>
+      1. Cliquez «Ouvrir Firebase Console»<br>
+      2. Créez un projet (désactivez Gemini et Analytics)<br>
+      3. Revenez dans l'app — configuration automatique ✅
+    </div>
   </div>
 <script>
   window.onload = function() {{
@@ -1747,17 +1667,22 @@ def setup_oauth_callback():
 
 @app.route("/setup/<token>/create", methods=["POST"])
 def setup_create_firebase(token):
+    """
+    Étape 5 : L'utilisateur a créé son projet Firebase manuellement.
+    On échange le code OAuth, on liste ses projets et on récupère le plus récent.
+    """
     session = charger_setup(token)
     if not session:
         return jsonify({"error": "Session invalide"}), 404
 
-    if session.get("status") in ("complete",):
+    if session.get("status") in ("complete"):
         return jsonify({"success": True, "status": session.get("status")})
 
     oauth_code = session.get("oauth_code", "")
     if not oauth_code:
         return jsonify({"error": "Code OAuth manquant"}), 400
 
+    # Échanger le code OAuth
     try:
         token_resp = http_requests.post("https://oauth2.googleapis.com/token", data={
             "code":          oauth_code,
@@ -1773,11 +1698,14 @@ def setup_create_firebase(token):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+    # Sauvegarder le token et lancer la configuration en arrière-plan
     sauvegarder_setup(token, {**session, "token_data": token_data, "status": "creating_project"})
 
+    # Lancer configure-firebase automatiquement en background
     def lancer_configuration():
         with app.app_context():
             try:
+                # Appel interne à configure_firebase
                 _configure_firebase_logic(token, {**session, "token_data": token_data, "status": "creating_project"})
             except Exception as e:
                 import traceback
@@ -1790,6 +1718,7 @@ def setup_create_firebase(token):
 
 @app.route("/setup/<token>/configure", methods=["GET"])
 def setup_configure_page(token):
+    """Page de sélection et configuration du projet Firebase."""
     session = charger_setup(token)
     if not session:
         return "Session invalide", 404
@@ -1822,6 +1751,8 @@ def setup_configure_page(token):
     .retry-btn{{background:#E53935;color:white;border:none;border-radius:8px;
                 padding:10px 20px;font-size:14px;cursor:pointer;
                 margin-top:12px;display:none}}
+
+    <!-- SVG Montagne -->
     .mountain-wrap{{margin:12px 0 8px 0}}
   </style>
 </head>
@@ -1832,6 +1763,8 @@ def setup_configure_page(token):
     <p style="color:#555;font-size:14px;margin-bottom:12px">
       Nous configurons <strong>{club_name}</strong>
     </p>
+
+    <!-- Montagne alpiniste SVG -->
     <div class="mountain-wrap">
       <svg viewBox="0 0 400 180" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">
         <defs>
@@ -1884,6 +1817,7 @@ def setup_configure_page(token):
               font-size="11" fill="white" font-weight="bold" font-family="Arial" opacity="0.9">0%</text>
       </svg>
     </div>
+
     <div id="steps">
       <div class="step active" id="s0">🔍 Recherche de votre projet Firebase</div>
       <div class="step" id="s1">📱 Enregistrement de l'application Android</div>
@@ -1891,10 +1825,11 @@ def setup_configure_page(token):
       <div class="step" id="s3">🔒 Règles de sécurité</div>
       <div class="step" id="s4">✅ Finalisation</div>
     </div>
+
     <div class="spinner" id="spinner" style="margin-top:12px"></div>
     <p style="color:#666;font-size:13px;margin-top:8px" id="msg">Recherche en cours...</p>
     <p style="color:#aaa;font-size:11px;margin-top:8px">
-      Cette opération prend environ 60 secondes.<br>Ne fermez pas cette page.
+      Cette opération prend environ 30 secondes.<br>Ne fermez pas cette page.
     </p>
     <div class="error-box" id="error-box"></div>
     <button class="retry-btn" id="retry-btn" onclick="window.history.back()">← Retour</button>
@@ -1903,7 +1838,7 @@ def setup_configure_page(token):
 var TOKEN = "{token}";
 var BASE = "/setup/" + TOKEN;
 var polls = 0;
-var MAX_POLLS = 80;
+var MAX_POLLS = 60;
 var PATH = [
   [75,163],[88,155],[103,145],[118,133],[135,120],
   [150,108],[162,94],[173,78],[183,62],[192,46],[203,30]
@@ -1934,12 +1869,11 @@ function showError(msg) {{
   document.getElementById("title").style.color = "#C62828";
   var eb = document.getElementById("error-box");
   eb.style.display = "block";
-  eb.innerHTML = "❌ " + (msg || "Erreur") + "<br><br>Vérifiez votre connexion et réessayez.";
+  eb.innerHTML = "❌ " + (msg || "Erreur") + "<br><br>Vérifiez que vous avez bien créé un projet Firebase et réessayez.";
   document.getElementById("retry-btn").style.display = "inline-block";
 }}
 
 var STATUS_PROGRESS = {{
-  "oauth_done": [0, 5],
   "creating_project": [0, 15],
   "configuring": [1, 35],
   "creating_app": [2, 50],
@@ -1977,6 +1911,7 @@ function poll() {{
   xhr.send();
 }}
 
+// Lancer la configuration automatiquement
 function start() {{
   var xhr = new XMLHttpRequest();
   xhr.open("POST", BASE + "/configure-firebase", true);
@@ -1999,6 +1934,7 @@ if (document.readyState === "complete" || document.readyState === "interactive")
 
 @app.route("/setup/<token>/status", methods=["GET"])
 def setup_status(token):
+    """Poll du statut de création."""
     session = charger_setup(token)
     if not session:
         return jsonify({"status": "error", "error": "Session invalide"})
@@ -2024,8 +1960,9 @@ def setup_status(token):
 
 @app.route("/setup/<token>/done", methods=["GET"])
 def setup_done_page(token):
+    """Étape 6 : Page de définition du mot de passe SU."""
     session = charger_setup(token)
-    if not session or session.get("status") not in ("complete",):
+    if not session or session.get("status") not in ("complete"):
         return redirect(f"/setup/{token}")
 
     club_name = session.get("club_name", "")
@@ -2116,11 +2053,7 @@ def setup_done_page(token):
 
 @app.route("/setup/<token>/finalize", methods=["POST"])
 def setup_finalize(token):
-    """
-    Étape finale : Hash du mot de passe SU choisi par l'utilisateur
-    + envoi de l'email de confirmation avec le vrai mot de passe.
-    C'est le SEUL endroit où l'email de confirmation est envoyé.
-    """
+    """Étape 7 : Hash du mot de passe SU + envoi email de confirmation."""
     session = charger_setup(token)
     if not session:
         return jsonify({"error": "Session invalide"}), 404
@@ -2140,15 +2073,16 @@ def setup_finalize(token):
 
     sauvegarder_setup(token, {
         **session,
+        "status":           "complete",
         "su_password_hash": su_hash,
         "completed_at":     datetime.now().isoformat()
     })
 
-    # Envoi de l'email de confirmation avec le vrai mot de passe choisi par l'utilisateur
+    # Envoyer l'email de confirmation avec le mot de passe SU en clair
     envoyer_email_confirmation(gmail, club_name, su_password)
 
     envoyer_notification(
-        "✅ Structure finalisée",
+        "✅ Structure créée",
         f"Structure: {club_name}\nGmail: {gmail}\nProject: {project_id}"
     )
 
@@ -2162,6 +2096,7 @@ def setup_finalize(token):
 
 @app.route("/setup/<token>/success", methods=["GET"])
 def setup_success(token):
+    """Étape 8 : Page finale de succès."""
     session   = charger_setup(token)
     club_name = session.get("club_name", "Votre structure") if session else "Votre structure"
     return f"""<!DOCTYPE html>
@@ -2194,6 +2129,10 @@ def setup_success(token):
 
 @app.route("/credentials/<token>", methods=["GET"])
 def get_credentials(token):
+    """
+    L'app Android poll cet endpoint pour récupérer les credentials
+    une fois la création terminée.
+    """
     session = charger_setup(token)
     if not session:
         return jsonify({"status": "not_found"}), 404
@@ -2214,6 +2153,7 @@ def get_credentials(token):
 
 @app.route("/setup/<token>/ping", methods=["GET"])
 def setup_ping(token):
+    """Endpoint léger pour l'app Android — appelé à chaque onResume."""
     session = charger_setup(token)
     if not session:
         return jsonify({"status": "not_found", "ready": False}), 404
@@ -2224,7 +2164,6 @@ def setup_ping(token):
     complete = status == "complete"
 
     resp = {"status": status, "ready": ready, "complete": complete}
-
     if complete:
         resp.update({
             "project_id":          session.get("project_id", ""),
@@ -2234,16 +2173,186 @@ def setup_ping(token):
             "club_name":           session.get("club_name", ""),
             "is_first_connection": session.get("is_first_connection", True),
         })
-
     return jsonify(resp)
+
+
+
+
+def _configure_firebase_logic(token, session):
+    """
+    Crée le projet Firebase de A à Z sur le compte Google de l'utilisateur.
+    Pas de retry loop, pas de serviceusage — addFirebase active les APIs tout seul.
+    """
+    club_name = session.get("club_name", "")
+    gmail = session.get("gmail", "")
+    token_data = session.get("token_data", {})
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=token_data.get("access_token", ""),
+            refresh_token=token_data.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+            scopes=GOOGLE_SCOPES
+        )
+
+        # === ÉTAPE 1 : Créer le projet Google Cloud ===
+        sauvegarder_setup(token, {**session, "status": "creating_project"})
+        suffix = secrets.token_hex(4)
+        safe_name = "".join(c.lower() if c.isalnum() else "-" for c in club_name)[:20].strip("-")
+        project_id = f"mp-{safe_name}-{suffix}"
+        print(f"[CONFIGURE] 🔨 Création projet GCloud: {project_id}")
+
+        crm = build("cloudresourcemanager", "v1", credentials=creds)
+        crm.projects().create(body={
+            "projectId": project_id,
+            "name": club_name[:30]
+        }).execute()
+        print(f"[CONFIGURE] ✅ Projet GCloud créé: {project_id}")
+        time.sleep(8)
+
+        # === ÉTAPE 2 : Activer Firebase sur le projet ===
+        # addFirebase active automatiquement les APIs nécessaires
+        sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
+        firebase_svc = build("firebase", "v1beta1", credentials=creds)
+        firebase_svc.projects().addFirebase(
+            project=f"projects/{project_id}", body={}
+        ).execute()
+        print(f"[CONFIGURE] ✅ Firebase activé: {project_id}")
+        time.sleep(8)
+
+        # === ÉTAPE 3 : Créer l'app Android ===
+        sauvegarder_setup(token, {**session, "status": "creating_app", "project_id": project_id})
+        app_id = ""
+        try:
+            firebase_svc.projects().androidApps().create(
+                parent=f"projects/{project_id}",
+                body={"packageName": "com.managerpresence", "displayName": club_name}
+            ).execute()
+            time.sleep(6)
+            apps = firebase_svc.projects().androidApps().list(
+                parent=f"projects/{project_id}"
+            ).execute()
+            app_id = apps["apps"][0]["appId"] if apps.get("apps") else ""
+            print(f"[CONFIGURE] ✅ App Android créée: {app_id}")
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ App Android: {e}")
+
+        # === ÉTAPE 4 : Activer Firestore en europe-west9 ===
+        sauvegarder_setup(token, {**session, "status": "firestore",
+            "project_id": project_id, "app_id": app_id})
+        try:
+            fs_svc = build("firestore", "v1", credentials=creds)
+            fs_svc.projects().databases().create(
+                parent=f"projects/{project_id}",
+                body={"type": "FIRESTORE_NATIVE", "locationId": "europe-west9"},
+                databaseId="(default)"
+            ).execute()
+            print(f"[CONFIGURE] ✅ Firestore activé: {project_id}")
+            time.sleep(5)
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Firestore: {e}")
+
+        # === ÉTAPE 4b : Règles de sécurité Firestore ===
+        try:
+            firestore_rules = """rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}"""
+            rules_svc = build("firebaserules", "v1", credentials=creds)
+            ruleset = rules_svc.projects().rulesets().create(
+                name=f"projects/{project_id}",
+                body={"source": {"files": [{"name": "firestore.rules", "content": firestore_rules}]}}
+            ).execute()
+            ruleset_name = ruleset.get("name", "")
+            if ruleset_name:
+                rules_svc.projects().releases().create(
+                    name=f"projects/{project_id}",
+                    body={"name": f"projects/{project_id}/releases/cloud.firestore", "rulesetName": ruleset_name}
+                ).execute()
+                print(f"[CONFIGURE] ✅ Règles Firestore configurées")
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Règles Firestore: {e}")
+
+        # === ÉTAPE 4c : Activer auth anonyme + Email/Password ===
+        try:
+            auth_url = f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/config"
+            headers_auth = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+            auth_body = {"signIn": {"anonymous": {"enabled": True}, "email": {"enabled": True, "passwordRequired": True}}}
+            auth_resp = http_requests.patch(auth_url, headers=headers_auth, json=auth_body,
+                params={"updateMask": "signIn.anonymous.enabled,signIn.email.enabled,signIn.email.passwordRequired"})
+            if auth_resp.status_code == 200:
+                print(f"[CONFIGURE] ✅ Auth anonyme + Email/Password activée")
+            else:
+                print(f"[CONFIGURE] ⚠️ Auth: {auth_resp.status_code} {auth_resp.text[:200]}")
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Auth: {e}")
+
+        # === ÉTAPE 5 : Récupérer l'API key ===
+        sauvegarder_setup(token, {**session, "status": "api_key",
+            "project_id": project_id, "app_id": app_id})
+        api_key = ""
+        try:
+            keys_svc = build("apikeys", "v2", credentials=creds)
+            keys_resp = keys_svc.projects().locations().keys().list(
+                parent=f"projects/{project_id}/locations/global"
+            ).execute()
+            if keys_resp.get("keys"):
+                key_detail = keys_svc.projects().locations().keys().getKeyString(
+                    name=keys_resp["keys"][0]["name"]
+                ).execute()
+                api_key = key_detail.get("keyString", "")
+                print(f"[CONFIGURE] ✅ API key récupérée")
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ API key: {e}")
+
+        # === ÉTAPE 6 : Licence trial + finaliser ===
+        licence = creer_licence_trial(project_id, club_name)
+        sauvegarder_licence(project_id, licence)
+
+        su_password = "0000"
+        su_hash = hashlib.sha256(su_password.encode()).hexdigest()
+
+        sauvegarder_setup(token, {
+            **session,
+            "status":              "complete",
+            "project_id":          project_id,
+            "app_id":              app_id,
+            "api_key":             api_key,
+            "su_password_hash":    su_hash,
+            "is_first_connection": True,
+        })
+        print(f"[CONFIGURE] 🎉 Terminé ! project_id={project_id}, app_id={app_id}")
+
+        try:
+            envoyer_notification(
+                "✅ Structure créée avec succès",
+                f"Structure: {club_name}\nGmail: {gmail}\nProject: {project_id}\nApp: {app_id}"
+            )
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Notification admin: {e}")
+
+    except Exception as e:
+        import traceback
+        print(f"[CONFIGURE] ❌ Erreur: {traceback.format_exc()}")
+        sauvegarder_setup(token, {**session, "status": "error", "error": str(e)})
 
 
 @app.route("/setup/<token>/configure-firebase", methods=["POST"])
 def configure_firebase(token):
+    """Configure le projet Firebase — délègue à _configure_firebase_logic."""
     session = charger_setup(token)
     if not session:
         return jsonify({"error": "Session invalide"}), 404
-    if session.get("status") in ("complete",):
+    if session.get("status") in ("complete"):
         return jsonify({"success": True})
     token_data = session.get("token_data", {})
     if not token_data:
@@ -2260,6 +2369,7 @@ def configure_firebase(token):
 
 @app.route("/resend-setup-email", methods=["POST"])
 def resend_setup_email():
+    """Renvoie l'email de setup si l'utilisateur ne l'a pas reçu."""
     data = request.get_json() or {}
     token = data.get("token", "")
     if not token:
@@ -2286,6 +2396,7 @@ def resend_setup_email():
 
 @app.route("/privacy", methods=["GET"])
 def privacy_policy():
+    """Politique de confidentialité — requise pour validation OAuth Google"""
     return """<!DOCTYPE html>
 <html>
 <head>
@@ -2381,6 +2492,7 @@ def privacy_policy():
 
 @app.route("/cgu", methods=["GET"])
 def cgu():
+    """Conditions Générales d'Utilisation"""
     return """<!DOCTYPE html>
 <html>
 <head>
