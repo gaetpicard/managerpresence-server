@@ -2208,22 +2208,61 @@ def _configure_firebase_logic(token, session):
         print(f"[CONFIGURE] 🔨 Création projet GCloud: {project_id}")
 
         crm = build("cloudresourcemanager", "v1", credentials=creds)
-        crm.projects().create(body={
+        create_op = crm.projects().create(body={
             "projectId": project_id,
             "name": club_name[:30]
         }).execute()
-        print(f"[CONFIGURE] ✅ Projet GCloud créé: {project_id}")
-        time.sleep(8)
+        print(f"[CONFIGURE] ⏳ Projet GCloud en cours de création: {project_id}")
+
+        # Attendre que l'opération de création soit terminée (polling)
+        crm_v1 = build("cloudresourcemanager", "v1", credentials=creds)
+        for i in range(30):  # max 60 secondes
+            time.sleep(2)
+            try:
+                project_info = crm_v1.projects().get(projectId=project_id).execute()
+                lifecycle = project_info.get("lifecycleState", "")
+                if lifecycle == "ACTIVE":
+                    print(f"[CONFIGURE] ✅ Projet GCloud actif: {project_id} (après {(i+1)*2}s)")
+                    break
+            except Exception:
+                pass  # projet pas encore accessible, on attend
+        else:
+            print(f"[CONFIGURE] ⚠️ Projet pas encore ACTIVE après 60s, on tente quand même")
+        
+        # Pause supplémentaire pour la propagation des permissions IAM
+        time.sleep(5)
 
         # === ÉTAPE 2 : Activer Firebase sur le projet ===
-        # addFirebase active automatiquement les APIs nécessaires
         sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
         firebase_svc = build("firebase", "v1beta1", credentials=creds)
-        firebase_svc.projects().addFirebase(
+        
+        # addFirebase retourne une Operation — on la poll jusqu'à done=true
+        add_op = firebase_svc.projects().addFirebase(
             project=f"projects/{project_id}", body={}
         ).execute()
-        print(f"[CONFIGURE] ✅ Firebase activé: {project_id}")
-        time.sleep(8)
+        
+        op_name = add_op.get("name", "")
+        if op_name:
+            # Poller l'opération addFirebase
+            for i in range(30):  # max 60 secondes
+                time.sleep(2)
+                try:
+                    op_status = firebase_svc.operations().get(name=op_name).execute()
+                    if op_status.get("done"):
+                        if "error" in op_status:
+                            raise Exception(f"addFirebase échoué: {op_status['error']}")
+                        print(f"[CONFIGURE] ✅ Firebase activé: {project_id} (après {(i+1)*2}s)")
+                        break
+                except Exception as e:
+                    if "done" in str(e) or i > 20:
+                        raise
+                    pass
+            else:
+                print(f"[CONFIGURE] ⚠️ addFirebase operation pas terminée après 60s")
+        else:
+            # Pas d'operation name, on attend un délai fixe
+            print(f"[CONFIGURE] ✅ Firebase activé (sync): {project_id}")
+            time.sleep(10)
 
         # === ÉTAPE 3 : Créer l'app Android ===
         sauvegarder_setup(token, {**session, "status": "creating_app", "project_id": project_id})
