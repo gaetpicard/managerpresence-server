@@ -359,7 +359,7 @@ def index():
     return jsonify({
         "service": "ManagerPresence License Server",
         "status": "ok",
-        "version": "2.0.2",
+        "version": "2.0.3",
         "timestamp": datetime.now().isoformat()
     })
 
@@ -1255,15 +1255,51 @@ def _configure_firebase_logic(token, session):
         print(f"[CONFIGURE] ✅ Projet GCloud créé: {project_id}")
         time.sleep(8)
 
-        # === ÉTAPE 2 : Activer Firebase sur le projet ===
+        # === ÉTAPE 1b : Activer les APIs nécessaires sur le projet ===
+        # FIX 403 : addFirebase échoue si l'API firebase.googleapis.com
+        # n'est pas activée sur le projet GCloud fraîchement créé.
         sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
+        try:
+            su_svc = build("serviceusage", "v1", credentials=creds)
+            apis_a_activer = [
+                "firebase.googleapis.com",
+                "firestore.googleapis.com",
+                "identitytoolkit.googleapis.com",
+            ]
+            for api in apis_a_activer:
+                try:
+                    su_svc.services().enable(
+                        name=f"projects/{project_id}/services/{api}"
+                    ).execute()
+                    print(f"[CONFIGURE] ✅ API activée: {api}")
+                except Exception as e:
+                    print(f"[CONFIGURE] ⚠️ Activation {api}: {e}")
+            # Laisser le temps aux APIs de se propager
+            time.sleep(15)
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Service Usage: {e}")
+            time.sleep(10)
+
+        # === ÉTAPE 2 : Activer Firebase sur le projet ===
         firebase_svc = build("firebase", "v1beta1", credentials=creds)
-        firebase_svc.projects().addFirebase(
-            project=f"projects/{project_id}", body={}
-        ).execute()
-        print(f"[CONFIGURE] ✅ Firebase activé: {project_id}")
-        # FIX: délai augmenté — Firebase Auth n'est pas disponible immédiatement
-        # L'initialisation côté Google prend 30 à 60 secondes sur un nouveau projet
+        # Retry loop : addFirebase peut échouer si les APIs ne sont pas encore propagées
+        firebase_active = False
+        for attempt in range(5):
+            try:
+                firebase_svc.projects().addFirebase(
+                    project=f"projects/{project_id}", body={}
+                ).execute()
+                print(f"[CONFIGURE] ✅ Firebase activé: {project_id} (tentative {attempt + 1}/5)")
+                firebase_active = True
+                break
+            except Exception as e:
+                print(f"[CONFIGURE] ⏳ addFirebase tentative {attempt + 1}/5: {e}")
+                time.sleep(10)
+
+        if not firebase_active:
+            raise Exception("Impossible d'activer Firebase sur le projet après 5 tentatives — vérifiez les permissions OAuth")
+
+        # Délai après addFirebase : Auth prend 30s à s'initialiser sur un nouveau projet
         time.sleep(30)
 
         # === ÉTAPE 3 : Créer l'app Android ===
