@@ -2200,6 +2200,20 @@ def _configure_firebase_logic(token, session):
             scopes=GOOGLE_SCOPES
         )
 
+        # Debug: vérifier que le token est valide
+        print(f"[CONFIGURE] 🔑 access_token présent: {bool(token_data.get('access_token'))}")
+        print(f"[CONFIGURE] 🔑 refresh_token présent: {bool(token_data.get('refresh_token'))}")
+        print(f"[CONFIGURE] 🔑 scopes reçus: {token_data.get('scope', 'AUCUN')}")
+
+        # Forcer le rafraîchissement du token si nécessaire
+        if not creds.valid:
+            try:
+                import google.auth.transport.requests
+                creds.refresh(google.auth.transport.requests.Request())
+                print(f"[CONFIGURE] 🔑 Token rafraîchi avec succès")
+            except Exception as e:
+                print(f"[CONFIGURE] ⚠️ Rafraîchissement token: {e}")
+
         # === ÉTAPE 1 : Créer le projet Google Cloud ===
         sauvegarder_setup(token, {**session, "status": "creating_project"})
         suffix = secrets.token_hex(4)
@@ -2236,10 +2250,24 @@ def _configure_firebase_logic(token, session):
         sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
         firebase_svc = build("firebase", "v1beta1", credentials=creds)
         
+        # Debug: vérifier les permissions avant addFirebase
+        try:
+            avail = firebase_svc.availableProjects().list().execute()
+            avail_ids = [p.get("projectId", "") for p in avail.get("projectInfo", [])]
+            print(f"[CONFIGURE] 📋 Projets disponibles pour addFirebase: {avail_ids}")
+            if project_id not in avail_ids:
+                print(f"[CONFIGURE] ⚠️ {project_id} n'est PAS dans la liste availableProjects !")
+                # Attendre encore un peu
+                time.sleep(10)
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ availableProjects check: {e}")
+        
         # addFirebase retourne une Operation — on la poll jusqu'à done=true
+        print(f"[CONFIGURE] 🔥 Appel addFirebase pour {project_id}...")
         add_op = firebase_svc.projects().addFirebase(
             project=f"projects/{project_id}", body={}
         ).execute()
+        print(f"[CONFIGURE] ✅ addFirebase accepté, operation: {add_op.get('name', 'N/A')}")
         
         op_name = add_op.get("name", "")
         if op_name:
