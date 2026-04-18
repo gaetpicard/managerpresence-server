@@ -1875,10 +1875,11 @@ function showError(msg) {{
 
 var STATUS_PROGRESS = {{
   "creating_project": [0, 15],
-  "configuring": [1, 35],
-  "creating_app": [2, 50],
-  "firestore": [2, 65],
-  "api_key": [3, 80],
+  "configuring": [1, 30],
+  "creating_app": [2, 45],
+  "firestore": [2, 55],
+  "api_key": [3, 65],
+  "auth_check": [3, 80],
   "complete": [4, 100]
 }};
 
@@ -1948,6 +1949,7 @@ def setup_status(token):
         "creating_app":     "Enregistrement de l'application Android...",
         "firestore":        "Activation de Firestore en France (europe-west9)...",
         "api_key":          "Récupération de la clé API...",
+        "auth_check":       "Vérification de l'authentification...",
         "complete":         "Votre espace est prêt !",
         "error":            session.get("error", "Erreur inconnue")
     }
@@ -2160,7 +2162,7 @@ def setup_ping(token):
 
     status = session.get("status", "pending")
     ready = status in ("oauth_done", "creating_project", "configuring", "creating_app",
-                       "firestore", "api_key", "complete")
+                       "firestore", "api_key", "auth_check", "complete")
     complete = status == "complete"
 
     resp = {"status": status, "ready": ready, "complete": complete}
@@ -2226,24 +2228,47 @@ def _configure_firebase_logic(token, session):
             "projectId": project_id,
             "name": club_name[:30]
         }).execute()
-        print(f"[CONFIGURE] ⏳ Projet GCloud en cours de création: {project_id}")
+        print(f"[CONFIGURE] 📋 Résultat projects.create: {json.dumps(create_op)[:500]}")
 
-        # Attendre que l'opération de création soit terminée (polling)
-        crm_v1 = build("cloudresourcemanager", "v1", credentials=creds)
-        for i in range(30):  # max 60 secondes
-            time.sleep(2)
-            try:
-                project_info = crm_v1.projects().get(projectId=project_id).execute()
-                lifecycle = project_info.get("lifecycleState", "")
-                if lifecycle == "ACTIVE":
-                    print(f"[CONFIGURE] ✅ Projet GCloud actif: {project_id} (après {(i+1)*2}s)")
-                    break
-            except Exception:
-                pass  # projet pas encore accessible, on attend
+        # Poller l'opération de création via operations.get si un nom d'opération est retourné
+        op_name = create_op.get("name", "")
+        if op_name:
+            print(f"[CONFIGURE] ⏳ Polling operation: {op_name}")
+            for i in range(30):
+                time.sleep(3)
+                try:
+                    op_result = crm.operations().get(name=op_name).execute()
+                    print(f"[CONFIGURE] ⏳ Operation status (tentative {i+1}): done={op_result.get('done')}")
+                    if op_result.get("done"):
+                        if "error" in op_result:
+                            error_info = op_result["error"]
+                            raise Exception(f"projects.create échoué: code={error_info.get('code')} message={error_info.get('message')}")
+                        print(f"[CONFIGURE] ✅ Projet GCloud créé avec succès: {project_id}")
+                        break
+                except Exception as e:
+                    if "projects.create échoué" in str(e):
+                        raise
+                    print(f"[CONFIGURE] ⏳ Operation polling erreur: {e}")
+            else:
+                print(f"[CONFIGURE] ⚠️ Operation pas terminée après 90s")
         else:
-            print(f"[CONFIGURE] ⚠️ Projet pas encore ACTIVE après 60s, on tente quand même")
+            # Pas d'operation name — fallback sur projects.get
+            print(f"[CONFIGURE] ⏳ Pas d'operation name, fallback projects.get polling...")
+            for i in range(30):
+                time.sleep(3)
+                try:
+                    project_info = crm.projects().get(projectId=project_id).execute()
+                    lifecycle = project_info.get("lifecycleState", "")
+                    print(f"[CONFIGURE] ⏳ projects.get tentative {i+1}: lifecycle={lifecycle}")
+                    if lifecycle == "ACTIVE":
+                        print(f"[CONFIGURE] ✅ Projet GCloud actif: {project_id}")
+                        break
+                except Exception as e:
+                    print(f"[CONFIGURE] ⏳ projects.get tentative {i+1} erreur: {e}")
+            else:
+                print(f"[CONFIGURE] ⚠️ Projet pas accessible après 90s")
         
-        # Pause supplémentaire pour la propagation des permissions IAM
+        # Pause pour la propagation IAM
         time.sleep(5)
 
         # === ÉTAPE 2 : Activer Firebase sur le projet ===
@@ -2359,9 +2384,49 @@ service cloud.firestore {
             if auth_resp.status_code == 200:
                 print(f"[CONFIGURE] ✅ Auth anonyme + Email/Password activée")
             else:
-                print(f"[CONFIGURE] ⚠️ Auth: {auth_resp.status_code} {auth_resp.text[:200]}")
+                print(f"[CONFIGURE] ⚠️ Auth config: {auth_resp.status_code} {auth_resp.text[:200]}")
         except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Auth: {e}")
+            print(f"[CONFIGURE] ⚠️ Auth config: {e}")
+
+        # === ÉTAPE 4d : Vérifier que l'auth fonctionne RÉELLEMENT ===
+        # On crée un utilisateur test via l'API REST Identity Toolkit v1
+        # pour s'assurer que l'auth est propagée avant de retourner "complete"
+        sauvegarder_setup(token, {**session, "status": "auth_check",
+            "project_id": project_id, "app_id": app_id})
+        auth_verified = False
+        for auth_check in range(15):  # max ~2.5 minutes
+            try:
+                # Tenter de créer un utilisateur test via l'API REST
+                signup_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
+                test_resp = http_requests.post(signup_url, json={
+                    "email": f"test-auth-check-{secrets.token_hex(4)}@managerpresence.local",
+                    "password": "TestAuth123!",
+                    "returnSecureToken": True
+                })
+                if test_resp.status_code == 200:
+                    # Auth fonctionne ! Supprimer l'utilisateur test
+                    test_data = test_resp.json()
+                    test_id_token = test_data.get("idToken", "")
+                    test_local_id = test_data.get("localId", "")
+                    print(f"[CONFIGURE] ✅ Auth vérifiée ! Utilisateur test créé (tentative {auth_check+1})")
+                    # Supprimer l'utilisateur test
+                    try:
+                        delete_url = f"https://identitytoolkit.googleapis.com/v1/accounts:delete?key={api_key}"
+                        http_requests.post(delete_url, json={"idToken": test_id_token})
+                        print(f"[CONFIGURE] 🗑️ Utilisateur test supprimé")
+                    except Exception:
+                        pass
+                    auth_verified = True
+                    break
+                else:
+                    err_msg = test_resp.text[:150]
+                    print(f"[CONFIGURE] ⏳ Auth pas encore prête (tentative {auth_check+1}/15): {err_msg}")
+            except Exception as e:
+                print(f"[CONFIGURE] ⏳ Auth check erreur (tentative {auth_check+1}/15): {e}")
+            time.sleep(10)
+        
+        if not auth_verified:
+            print(f"[CONFIGURE] ⚠️ Auth non vérifiée après 15 tentatives — on continue quand même")
 
         # === ÉTAPE 5 : Récupérer l'API key ===
         sauvegarder_setup(token, {**session, "status": "api_key",
