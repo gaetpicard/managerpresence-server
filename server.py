@@ -2374,7 +2374,18 @@ service cloud.firestore {
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Règles Firestore: {e}")
 
-        # === ÉTAPE 4c : Activer auth anonyme + Email/Password ===
+        # === ÉTAPE 4c : Activer l'API Identity Toolkit puis configurer auth ===
+        try:
+            # D'abord activer l'API identitytoolkit sur le projet
+            su_svc = build("serviceusage", "v1", credentials=creds)
+            su_svc.services().enable(
+                name=f"projects/{project_id}/services/identitytoolkit.googleapis.com"
+            ).execute()
+            print(f"[CONFIGURE] ✅ API Identity Toolkit activée")
+            time.sleep(5)  # Laisser propager
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Activation API Identity Toolkit: {e}")
+
         try:
             auth_url = f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/config"
             headers_auth = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
