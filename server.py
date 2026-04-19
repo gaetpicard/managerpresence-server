@@ -2388,46 +2388,6 @@ service cloud.firestore {
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Auth config: {e}")
 
-        # === ÉTAPE 4d : Vérifier que l'auth fonctionne RÉELLEMENT ===
-        # On crée un utilisateur test via l'API REST Identity Toolkit v1
-        # pour s'assurer que l'auth est propagée avant de retourner "complete"
-        sauvegarder_setup(token, {**session, "status": "auth_check",
-            "project_id": project_id, "app_id": app_id})
-        auth_verified = False
-        for auth_check in range(15):  # max ~2.5 minutes
-            try:
-                # Tenter de créer un utilisateur test via l'API REST
-                signup_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
-                test_resp = http_requests.post(signup_url, json={
-                    "email": f"test-auth-check-{secrets.token_hex(4)}@managerpresence.local",
-                    "password": "TestAuth123!",
-                    "returnSecureToken": True
-                })
-                if test_resp.status_code == 200:
-                    # Auth fonctionne ! Supprimer l'utilisateur test
-                    test_data = test_resp.json()
-                    test_id_token = test_data.get("idToken", "")
-                    test_local_id = test_data.get("localId", "")
-                    print(f"[CONFIGURE] ✅ Auth vérifiée ! Utilisateur test créé (tentative {auth_check+1})")
-                    # Supprimer l'utilisateur test
-                    try:
-                        delete_url = f"https://identitytoolkit.googleapis.com/v1/accounts:delete?key={api_key}"
-                        http_requests.post(delete_url, json={"idToken": test_id_token})
-                        print(f"[CONFIGURE] 🗑️ Utilisateur test supprimé")
-                    except Exception:
-                        pass
-                    auth_verified = True
-                    break
-                else:
-                    err_msg = test_resp.text[:150]
-                    print(f"[CONFIGURE] ⏳ Auth pas encore prête (tentative {auth_check+1}/15): {err_msg}")
-            except Exception as e:
-                print(f"[CONFIGURE] ⏳ Auth check erreur (tentative {auth_check+1}/15): {e}")
-            time.sleep(10)
-        
-        if not auth_verified:
-            print(f"[CONFIGURE] ⚠️ Auth non vérifiée après 15 tentatives — on continue quand même")
-
         # === ÉTAPE 5 : Récupérer l'API key ===
         sauvegarder_setup(token, {**session, "status": "api_key",
             "project_id": project_id, "app_id": app_id})
@@ -2445,6 +2405,44 @@ service cloud.firestore {
                 print(f"[CONFIGURE] ✅ API key récupérée")
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ API key: {e}")
+
+        # === ÉTAPE 5b : Vérifier que l'auth fonctionne RÉELLEMENT ===
+        # Maintenant qu'on a l'API key, on peut tester l'auth via l'API REST
+        if api_key:
+            sauvegarder_setup(token, {**session, "status": "auth_check",
+                "project_id": project_id, "app_id": app_id})
+            auth_verified = False
+            for auth_check in range(15):  # max ~2.5 minutes
+                try:
+                    signup_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
+                    test_resp = http_requests.post(signup_url, json={
+                        "email": f"test-auth-{secrets.token_hex(4)}@managerpresence.local",
+                        "password": "TestAuth123!",
+                        "returnSecureToken": True
+                    })
+                    if test_resp.status_code == 200:
+                        test_data = test_resp.json()
+                        test_id_token = test_data.get("idToken", "")
+                        print(f"[CONFIGURE] ✅ Auth vérifiée ! (tentative {auth_check+1})")
+                        try:
+                            delete_url = f"https://identitytoolkit.googleapis.com/v1/accounts:delete?key={api_key}"
+                            http_requests.post(delete_url, json={"idToken": test_id_token})
+                            print(f"[CONFIGURE] 🗑️ Utilisateur test supprimé")
+                        except Exception:
+                            pass
+                        auth_verified = True
+                        break
+                    else:
+                        err_msg = test_resp.text[:150]
+                        print(f"[CONFIGURE] ⏳ Auth pas prête (tentative {auth_check+1}/15): {err_msg}")
+                except Exception as e:
+                    print(f"[CONFIGURE] ⏳ Auth check erreur (tentative {auth_check+1}/15): {e}")
+                time.sleep(10)
+            
+            if not auth_verified:
+                print(f"[CONFIGURE] ⚠️ Auth non vérifiée après 15 tentatives — on continue quand même")
+        else:
+            print(f"[CONFIGURE] ⚠️ Pas d'API key, impossible de vérifier l'auth")
 
         # === ÉTAPE 6 : Licence trial + finaliser ===
         licence = creer_licence_trial(project_id, club_name)
