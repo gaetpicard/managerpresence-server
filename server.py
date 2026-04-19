@@ -2376,28 +2376,43 @@ service cloud.firestore {
 
         # === ÉTAPE 4c : Activer l'API Identity Toolkit puis configurer auth ===
         try:
-            # D'abord activer l'API identitytoolkit sur le projet
+            # Activer l'API identitytoolkit sur le projet
             su_svc = build("serviceusage", "v1", credentials=creds)
             su_svc.services().enable(
                 name=f"projects/{project_id}/services/identitytoolkit.googleapis.com"
             ).execute()
             print(f"[CONFIGURE] ✅ API Identity Toolkit activée")
-            time.sleep(5)  # Laisser propager
+            time.sleep(8)  # Laisser propager
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Activation API Identity Toolkit: {e}")
 
+        # Configurer auth via l'API v1 (setProjectConfig) — fonctionne avec Firebase standard
+        try:
+            # Méthode 1 : API v1 setProjectConfig (allowPasswordSignup)
+            toolkit_url = f"https://www.googleapis.com/identitytoolkit/v3/relyingparty/setProjectConfig"
+            headers_auth = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+            config_body = {
+                "allowPasswordUser": True,
+                "useEmailSending": True,
+                "apiKey": project_id,
+            }
+            config_resp = http_requests.post(toolkit_url, headers=headers_auth, json=config_body)
+            print(f"[CONFIGURE] 📋 setProjectConfig v1: {config_resp.status_code} {config_resp.text[:300]}")
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ setProjectConfig v1: {e}")
+
+        # Méthode 2 : API admin v2 (au cas où la v1 ne suffit pas)
         try:
             auth_url = f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/config"
-            headers_auth = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
             auth_body = {"signIn": {"anonymous": {"enabled": True}, "email": {"enabled": True, "passwordRequired": True}}}
             auth_resp = http_requests.patch(auth_url, headers=headers_auth, json=auth_body,
                 params={"updateMask": "signIn.anonymous.enabled,signIn.email.enabled,signIn.email.passwordRequired"})
             if auth_resp.status_code == 200:
-                print(f"[CONFIGURE] ✅ Auth anonyme + Email/Password activée")
+                print(f"[CONFIGURE] ✅ Auth v2 configurée")
             else:
-                print(f"[CONFIGURE] ⚠️ Auth config: {auth_resp.status_code} {auth_resp.text[:200]}")
+                print(f"[CONFIGURE] ⚠️ Auth v2: {auth_resp.status_code} {auth_resp.text[:200]}")
         except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Auth config: {e}")
+            print(f"[CONFIGURE] ⚠️ Auth v2: {e}")
 
         # === ÉTAPE 5 : Récupérer l'API key ===
         sauvegarder_setup(token, {**session, "status": "api_key",
