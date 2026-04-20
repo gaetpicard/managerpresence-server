@@ -1879,7 +1879,6 @@ var STATUS_PROGRESS = {{
   "creating_app": [2, 45],
   "firestore": [2, 55],
   "api_key": [3, 65],
-  "auth_check": [3, 80],
   "complete": [4, 100]
 }};
 
@@ -1949,7 +1948,6 @@ def setup_status(token):
         "creating_app":     "Enregistrement de l'application Android...",
         "firestore":        "Activation de Firestore en France (europe-west9)...",
         "api_key":          "Récupération de la clé API...",
-        "auth_check":       "Vérification de l'authentification...",
         "complete":         "Votre espace est prêt !",
         "error":            session.get("error", "Erreur inconnue")
     }
@@ -2162,7 +2160,7 @@ def setup_ping(token):
 
     status = session.get("status", "pending")
     ready = status in ("oauth_done", "creating_project", "configuring", "creating_app",
-                       "firestore", "api_key", "auth_check", "complete")
+                       "firestore", "api_key", "complete")
     complete = status == "complete"
 
     resp = {"status": status, "ready": ready, "complete": complete}
@@ -2362,6 +2360,17 @@ def _configure_firebase_logic(token, session):
 
         # === ÉTAPE 4b : Règles de sécurité Firestore ===
         try:
+            # Activer l'API firebaserules sur le projet utilisateur
+            su_svc = build("serviceusage", "v1", credentials=creds)
+            su_svc.services().enable(
+                name=f"projects/{project_id}/services/firebaserules.googleapis.com"
+            ).execute()
+            print(f"[CONFIGURE] ✅ API Firebase Rules activée")
+            time.sleep(3)
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Activation API Firebase Rules: {e}")
+
+        try:
             firestore_rules = """rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -2429,44 +2438,6 @@ service cloud.firestore {
                 print(f"[CONFIGURE] ✅ API key récupérée")
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ API key: {e}")
-
-        # === ÉTAPE 5b : Vérifier que l'auth fonctionne RÉELLEMENT ===
-        # Maintenant qu'on a l'API key, on peut tester l'auth via l'API REST
-        if api_key:
-            sauvegarder_setup(token, {**session, "status": "auth_check",
-                "project_id": project_id, "app_id": app_id})
-            auth_verified = False
-            for auth_check in range(15):  # max ~2.5 minutes
-                try:
-                    signup_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
-                    test_resp = http_requests.post(signup_url, json={
-                        "email": f"test-auth-{secrets.token_hex(4)}@managerpresence.local",
-                        "password": "TestAuth123!",
-                        "returnSecureToken": True
-                    })
-                    if test_resp.status_code == 200:
-                        test_data = test_resp.json()
-                        test_id_token = test_data.get("idToken", "")
-                        print(f"[CONFIGURE] ✅ Auth vérifiée ! (tentative {auth_check+1})")
-                        try:
-                            delete_url = f"https://identitytoolkit.googleapis.com/v1/accounts:delete?key={api_key}"
-                            http_requests.post(delete_url, json={"idToken": test_id_token})
-                            print(f"[CONFIGURE] 🗑️ Utilisateur test supprimé")
-                        except Exception:
-                            pass
-                        auth_verified = True
-                        break
-                    else:
-                        err_msg = test_resp.text[:150]
-                        print(f"[CONFIGURE] ⏳ Auth pas prête (tentative {auth_check+1}/15): {err_msg}")
-                except Exception as e:
-                    print(f"[CONFIGURE] ⏳ Auth check erreur (tentative {auth_check+1}/15): {e}")
-                time.sleep(10)
-            
-            if not auth_verified:
-                print(f"[CONFIGURE] ⚠️ Auth non vérifiée après 15 tentatives — on continue quand même")
-        else:
-            print(f"[CONFIGURE] ⚠️ Pas d'API key, impossible de vérifier l'auth")
 
         # === ÉTAPE 6 : Licence trial + finaliser ===
         licence = creer_licence_trial(project_id, club_name)
