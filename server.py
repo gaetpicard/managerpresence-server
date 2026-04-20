@@ -2371,11 +2371,13 @@ def _configure_firebase_logic(token, session):
             print(f"[CONFIGURE] ⚠️ Activation API Firebase Rules: {e}")
 
         try:
+            # Règles ouvertes pendant le setup initial
+            # L'app les resserrera après le premier démarrage du club
             firestore_rules = """rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if true;
     }
   }
 }"""
@@ -2390,7 +2392,7 @@ service cloud.firestore {
                     name=f"projects/{project_id}",
                     body={"name": f"projects/{project_id}/releases/cloud.firestore", "rulesetName": ruleset_name}
                 ).execute()
-                print(f"[CONFIGURE] ✅ Règles Firestore configurées")
+                print(f"[CONFIGURE] ✅ Règles Firestore configurées (ouvertes pour setup initial)")
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Règles Firestore: {e}")
 
