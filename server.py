@@ -2226,7 +2226,7 @@ def _configure_firebase_logic(token, session):
         crm = build("cloudresourcemanager", "v1", credentials=creds)
         create_op = crm.projects().create(body={
             "projectId": project_id,
-            "name": club_name[:30].ljust(4, "_")
+            "name": (club_name + " Club")[:30] if len(club_name) < 4 else club_name[:30]
         }).execute()
         print(f"[CONFIGURE] 📋 Résultat projects.create: {json.dumps(create_op)[:500]}")
 
