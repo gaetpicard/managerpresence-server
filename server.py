@@ -2334,9 +2334,20 @@ def _configure_firebase_logic(token, session):
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ App Android: {e}")
 
-        # === ÉTAPE 4 : Activer Firestore en europe-west9 ===
+        # === ÉTAPE 4 : Activer l'API Firestore puis créer la base ===
         sauvegarder_setup(token, {**session, "status": "firestore",
             "project_id": project_id, "app_id": app_id})
+        try:
+            # Activer l'API Firestore sur le projet utilisateur
+            su_svc = build("serviceusage", "v1", credentials=creds)
+            su_svc.services().enable(
+                name=f"projects/{project_id}/services/firestore.googleapis.com"
+            ).execute()
+            print(f"[CONFIGURE] ✅ API Firestore activée")
+            time.sleep(5)
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ Activation API Firestore: {e}")
+
         try:
             fs_svc = build("firestore", "v1", credentials=creds)
             fs_svc.projects().databases().create(
@@ -2344,7 +2355,7 @@ def _configure_firebase_logic(token, session):
                 body={"type": "FIRESTORE_NATIVE", "locationId": "europe-west9"},
                 databaseId="(default)"
             ).execute()
-            print(f"[CONFIGURE] ✅ Firestore activé: {project_id}")
+            print(f"[CONFIGURE] ✅ Firestore créé: {project_id}")
             time.sleep(5)
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Firestore: {e}")
@@ -2374,43 +2385,30 @@ service cloud.firestore {
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Règles Firestore: {e}")
 
-        # === ÉTAPE 4c : Activer l'API Identity Toolkit puis configurer auth ===
+        # === ÉTAPE 4c : Activer Identity Toolkit et configurer auth ===
+        # Headers communs pour les appels auth — token de l'UTILISATEUR sur son projet
+        headers_auth = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+
         try:
-            # Activer l'API identitytoolkit sur le projet
             su_svc = build("serviceusage", "v1", credentials=creds)
             su_svc.services().enable(
                 name=f"projects/{project_id}/services/identitytoolkit.googleapis.com"
             ).execute()
-            print(f"[CONFIGURE] ✅ API Identity Toolkit activée")
-            time.sleep(8)  # Laisser propager
+            print(f"[CONFIGURE] ✅ API Identity Toolkit activée sur {project_id}")
+            time.sleep(8)
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Activation API Identity Toolkit: {e}")
 
-        # Configurer auth via l'API v1 (setProjectConfig) — fonctionne avec Firebase standard
-        try:
-            # Méthode 1 : API v1 setProjectConfig (allowPasswordSignup)
-            toolkit_url = f"https://www.googleapis.com/identitytoolkit/v3/relyingparty/setProjectConfig"
-            headers_auth = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
-            config_body = {
-                "allowPasswordUser": True,
-                "useEmailSending": True,
-                "apiKey": project_id,
-            }
-            config_resp = http_requests.post(toolkit_url, headers=headers_auth, json=config_body)
-            print(f"[CONFIGURE] 📋 setProjectConfig v1: {config_resp.status_code} {config_resp.text[:300]}")
-        except Exception as e:
-            print(f"[CONFIGURE] ⚠️ setProjectConfig v1: {e}")
-
-        # Méthode 2 : API admin v2 (au cas où la v1 ne suffit pas)
+        # API admin v2 — sur le projet de l'UTILISATEUR (project_id), pas le projet serveur
         try:
             auth_url = f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/config"
             auth_body = {"signIn": {"anonymous": {"enabled": True}, "email": {"enabled": True, "passwordRequired": True}}}
             auth_resp = http_requests.patch(auth_url, headers=headers_auth, json=auth_body,
                 params={"updateMask": "signIn.anonymous.enabled,signIn.email.enabled,signIn.email.passwordRequired"})
             if auth_resp.status_code == 200:
-                print(f"[CONFIGURE] ✅ Auth v2 configurée")
+                print(f"[CONFIGURE] ✅ Auth configurée sur {project_id}")
             else:
-                print(f"[CONFIGURE] ⚠️ Auth v2: {auth_resp.status_code} {auth_resp.text[:200]}")
+                print(f"[CONFIGURE] ⚠️ Auth v2: {auth_resp.status_code} {auth_resp.text[:300]}")
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Auth v2: {e}")
 
