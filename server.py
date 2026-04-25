@@ -2366,14 +2366,12 @@ def _configure_firebase_logic(token, session):
                 name=f"projects/{project_id}/services/firebaserules.googleapis.com"
             ).execute()
             print(f"[CONFIGURE] ✅ API Firebase Rules activée")
-            time.sleep(3)
+            time.sleep(10)  # Laisser l'API se propager (ancien 3s ne suffisait pas)
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ Activation API Firebase Rules: {e}")
 
-        try:
-            # Règles ouvertes pendant le setup initial
-            # L'app les resserrera après le premier démarrage du club
-            firestore_rules = """rules_version = '2';
+        # Règles ouvertes pendant le setup initial
+        firestore_rules = """rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /{document=**} {
@@ -2381,20 +2379,30 @@ service cloud.firestore {
     }
   }
 }"""
-            rules_svc = build("firebaserules", "v1", credentials=creds)
-            ruleset = rules_svc.projects().rulesets().create(
-                name=f"projects/{project_id}",
-                body={"source": {"files": [{"name": "firestore.rules", "content": firestore_rules}]}}
-            ).execute()
-            ruleset_name = ruleset.get("name", "")
-            if ruleset_name:
-                rules_svc.projects().releases().create(
+        # Retry sur la création/déploiement des règles — l'API peut mettre du temps à devenir dispo
+        rules_deployed = False
+        for rules_attempt in range(6):
+            try:
+                rules_svc = build("firebaserules", "v1", credentials=creds)
+                ruleset = rules_svc.projects().rulesets().create(
                     name=f"projects/{project_id}",
-                    body={"name": f"projects/{project_id}/releases/cloud.firestore", "rulesetName": ruleset_name}
+                    body={"source": {"files": [{"name": "firestore.rules", "content": firestore_rules}]}}
                 ).execute()
-                print(f"[CONFIGURE] ✅ Règles Firestore configurées (ouvertes pour setup initial)")
-        except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Règles Firestore: {e}")
+                ruleset_name = ruleset.get("name", "")
+                if ruleset_name:
+                    rules_svc.projects().releases().create(
+                        name=f"projects/{project_id}",
+                        body={"name": f"projects/{project_id}/releases/cloud.firestore", "rulesetName": ruleset_name}
+                    ).execute()
+                    print(f"[CONFIGURE] ✅ Règles Firestore déployées (tentative {rules_attempt+1})")
+                    rules_deployed = True
+                    break
+            except Exception as e:
+                print(f"[CONFIGURE] ⏳ Règles Firestore tentative {rules_attempt+1}/6: {e}")
+                time.sleep(10)
+        
+        if not rules_deployed:
+            print(f"[CONFIGURE] ❌ ÉCHEC du déploiement des règles Firestore après 6 tentatives !")
 
         # === ÉTAPE 4c : Activer Identity Toolkit et configurer auth ===
         # Headers communs pour les appels auth — token de l'UTILISATEUR sur son projet
