@@ -2528,16 +2528,14 @@ service cloud.firestore {
         licence = creer_licence_trial(project_id, club_name)
         sauvegarder_licence(project_id, licence)
 
-        su_password = "0000"
-        su_hash = hashlib.sha256(su_password.encode()).hexdigest()
-
+        # Pas de mot de passe SU côté serveur — l'utilisateur le choisit lui-même
+        # lors de "Démarrer le club" dans l'app
         sauvegarder_setup(token, {
             **session,
             "status":              "complete",
             "project_id":          project_id,
             "app_id":              app_id,
             "api_key":             api_key,
-            "su_password_hash":    su_hash,
             "is_first_connection": True,
         })
         print(f"[CONFIGURE] 🎉 Terminé ! project_id={project_id}, app_id={app_id}")
