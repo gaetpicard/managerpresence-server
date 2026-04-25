@@ -2176,6 +2176,81 @@ def setup_ping(token):
     return jsonify(resp)
 
 
+@app.route("/setup/<token>/secure-rules", methods=["POST"])
+def setup_secure_rules(token):
+    """
+    Resserre les règles Firestore après la création du premier admin.
+    Passe de 'allow read, write: if true' à 'allow read, write: if request.auth != null'.
+    Utilise le refresh_token stocké pour rafraîchir le token OAuth si nécessaire.
+    """
+    session = charger_setup(token)
+    if not session:
+        return jsonify({"error": "Session invalide"}), 404
+
+    project_id = session.get("project_id", "")
+    if not project_id:
+        return jsonify({"error": "project_id manquant"}), 400
+
+    token_data = session.get("token_data", {})
+    refresh_token = token_data.get("refresh_token", "")
+    if not refresh_token:
+        return jsonify({"error": "refresh_token manquant"}), 400
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=token_data.get("access_token", ""),
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+            scopes=GOOGLE_SCOPES
+        )
+
+        # Forcer le rafraîchissement du token (il a peut-être expiré depuis la création)
+        try:
+            import google.auth.transport.requests
+            creds.refresh(google.auth.transport.requests.Request())
+            print(f"[SECURE-RULES] 🔑 Token rafraîchi pour {project_id}")
+        except Exception as e:
+            print(f"[SECURE-RULES] ⚠️ Refresh token: {e}")
+
+        # Règles strictes
+        firestore_rules = """rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}"""
+        rules_svc = build("firebaserules", "v1", credentials=creds)
+        ruleset = rules_svc.projects().rulesets().create(
+            name=f"projects/{project_id}",
+            body={"source": {"files": [{"name": "firestore.rules", "content": firestore_rules}]}}
+        ).execute()
+        ruleset_name = ruleset.get("name", "")
+        if ruleset_name:
+            rules_svc.projects().releases().updateRelease(
+                name=f"projects/{project_id}/releases/cloud.firestore",
+                body={"release": {
+                    "name": f"projects/{project_id}/releases/cloud.firestore",
+                    "rulesetName": ruleset_name
+                }}
+            ).execute()
+            print(f"[SECURE-RULES] ✅ Règles strictes appliquées pour {project_id}")
+            return jsonify({"success": True, "message": "Règles sécurisées"})
+        else:
+            return jsonify({"error": "ruleset_name vide"}), 500
+
+    except Exception as e:
+        import traceback
+        print(f"[SECURE-RULES] ❌ Erreur: {traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
 
 
 def _configure_firebase_logic(token, session):
