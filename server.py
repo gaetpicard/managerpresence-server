@@ -1508,7 +1508,6 @@ def create_structure():
     }), 201
 
 
-@app.route("/setup/<token>", methods=["GET"])
 def web_t(lang, key):
     """Traduction pour les pages web générées par le serveur."""
     WEB_I18N = {
@@ -1583,6 +1582,7 @@ def web_t(lang, key):
     return entry.get(lang, entry.get("FR", key))
 
 
+@app.route("/setup/<token>", methods=["GET"])
 def setup_page(token):
     """Étape 2 : Page HTML affichée quand l'utilisateur clique le lien email."""
     session = charger_setup(token)
