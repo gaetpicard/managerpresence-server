@@ -1138,69 +1138,176 @@ def supprimer_setup(token):
 def generer_token_setup():
     return secrets.token_urlsafe(32)
 
-def envoyer_email_setup(gmail, club_name, setup_url):
-    """Envoie l'email de setup via Brevo API"""
+def envoyer_email_setup(gmail, club_name, setup_url, lang="FR"):
+    """Envoie l'email de setup via Brevo API dans la langue de l'utilisateur"""
     if not BREVO_API_KEY:
         print(f"[SETUP EMAIL] BREVO_API_KEY manquant — URL: {setup_url}")
         return True
+
+    i18n = {
+        "FR": {
+            "subject": f"Créez votre espace {club_name} — ManagerPresence",
+            "title": "Votre espace est presque prêt !",
+            "body": f"La structure <strong>\"{club_name}\"</strong> a été initialisée.<br>Il ne reste qu'une étape : vous connecter avec votre compte Google.",
+            "btn": "Finaliser la création →",
+            "validity": "Ce lien est valable 24 heures.<br>Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.",
+            "footer": "ManagerPresence — Données hébergées en France (Firebase europe-west9)"
+        },
+        "EN": {
+            "subject": f"Create your {club_name} space — ManagerPresence",
+            "title": "Your space is almost ready!",
+            "body": f"The structure <strong>\"{club_name}\"</strong> has been initialized.<br>One step left: sign in with your Google account.",
+            "btn": "Complete setup →",
+            "validity": "This link is valid for 24 hours.<br>If you did not make this request, please ignore this email.",
+            "footer": "ManagerPresence — Data hosted in France (Firebase europe-west9)"
+        },
+        "ES": {
+            "subject": f"Cree su espacio {club_name} — ManagerPresence",
+            "title": "¡Su espacio está casi listo!",
+            "body": f"La estructura <strong>\"{club_name}\"</strong> ha sido inicializada.<br>Solo queda un paso: iniciar sesión con su cuenta de Google.",
+            "btn": "Finalizar la creación →",
+            "validity": "Este enlace es válido durante 24 horas.<br>Si no realizó esta solicitud, ignore este correo.",
+            "footer": "ManagerPresence — Datos alojados en Francia (Firebase europe-west9)"
+        },
+        "DE": {
+            "subject": f"Erstellen Sie Ihren {club_name} Bereich — ManagerPresence",
+            "title": "Ihr Bereich ist fast fertig!",
+            "body": f"Die Einrichtung <strong>\"{club_name}\"</strong> wurde initialisiert.<br>Noch ein Schritt: Melden Sie sich mit Ihrem Google-Konto an.",
+            "btn": "Einrichtung abschließen →",
+            "validity": "Dieser Link ist 24 Stunden gültig.<br>Falls Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail.",
+            "footer": "ManagerPresence — Daten in Frankreich gehostet (Firebase europe-west9)"
+        },
+        "IT": {
+            "subject": f"Crea il tuo spazio {club_name} — ManagerPresence",
+            "title": "Il tuo spazio è quasi pronto!",
+            "body": f"La struttura <strong>\"{club_name}\"</strong> è stata inizializzata.<br>Manca solo un passo: accedi con il tuo account Google.",
+            "btn": "Completa la creazione →",
+            "validity": "Questo link è valido per 24 ore.<br>Se non hai effettuato questa richiesta, ignora questa email.",
+            "footer": "ManagerPresence — Dati ospitati in Francia (Firebase europe-west9)"
+        },
+        "PT": {
+            "subject": f"Crie o seu espaço {club_name} — ManagerPresence",
+            "title": "O seu espaço está quase pronto!",
+            "body": f"A estrutura <strong>\"{club_name}\"</strong> foi inicializada.<br>Falta apenas um passo: iniciar sessão com a sua conta Google.",
+            "btn": "Finalizar a criação →",
+            "validity": "Este link é válido por 24 horas.<br>Se não fez este pedido, ignore este email.",
+            "footer": "ManagerPresence — Dados alojados em França (Firebase europe-west9)"
+        },
+    }
+    t = i18n.get(lang, i18n["FR"])
+
     try:
         html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
   <h1 style="color:#1565C0;text-align:center">🏔️ ManagerPresence</h1>
-  <h2>Votre espace est presque prêt !</h2>
-  <p style="color:#555;font-size:16px">
-    La structure <strong>"{club_name}"</strong> a été initialisée.<br>
-    Il ne reste qu'une étape : vous connecter avec votre compte Google.
-  </p>
+  <h2>{t['title']}</h2>
+  <p style="color:#555;font-size:16px">{t['body']}</p>
   <div style="text-align:center;margin:30px 0">
     <a href="{setup_url}"
        style="background:#1565C0;color:white;padding:16px 32px;
               text-decoration:none;border-radius:8px;font-size:16px;
               font-weight:bold;display:inline-block">
-      Finaliser la création →
+      {t['btn']}
     </a>
   </div>
-  <p style="color:#888;font-size:13px;text-align:center">
-    Ce lien est valable 24 heures.<br>
-    Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.
-  </p>
+  <p style="color:#888;font-size:13px;text-align:center">{t['validity']}</p>
   <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
-  <p style="color:#aaa;font-size:12px;text-align:center">
-    ManagerPresence — Données hébergées en France (Firebase europe-west9)
-  </p>
+  <p style="color:#aaa;font-size:12px;text-align:center">{t['footer']}</p>
 </body></html>"""
 
         import urllib.request
         payload = json.dumps({
             "sender": {"name": "ManagerPresence", "email": "cp.support.dev@gmail.com"},
             "to": [{"email": gmail}],
-            "subject": f"Créez votre espace {club_name} — ManagerPresence",
+            "subject": t["subject"],
             "htmlContent": html
         }).encode("utf-8")
         req = urllib.request.Request(
             "https://api.brevo.com/v3/smtp/email",
             data=payload,
-            headers={
-                "api-key": BREVO_API_KEY,
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            },
+            headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json", "Accept": "application/json"},
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read().decode())
-            print(f"[SETUP] Email Brevo envoyé à {gmail} — id: {result.get('messageId')}")
+            print(f"[SETUP] Email Brevo envoyé à {gmail} (lang={lang}) — id: {result.get('messageId')}")
         return True
     except Exception as e:
         print(f"[SETUP] Erreur envoi email Brevo: {e}")
         return False
 
-def envoyer_email_confirmation(gmail, club_name, su_password):
-    """Envoie l'email de confirmation avec le mot de passe SU via Brevo"""
+def envoyer_email_confirmation(gmail, club_name, su_password, lang="FR"):
+    """Envoie l'email de confirmation avec le mot de passe SU via Brevo dans la langue de l'utilisateur"""
     if not BREVO_API_KEY:
         print(f"[CONFIRMATION] BREVO_API_KEY manquant — MDP: {su_password}")
         return True
+
+    i18n = {
+        "FR": {
+            "subject": f"✅ Votre espace {club_name} est opérationnel !",
+            "ready": "✅ Votre espace est opérationnel !",
+            "body": f"La structure <strong>\"{club_name}\"</strong> est prête.",
+            "su_title": "🔐 Votre mot de passe Super Utilisateur",
+            "su_warning": "⚠️ <strong>Conservez ce mot de passe précieusement.</strong><br>Il ne peut pas être récupéré.",
+            "how_title": "Comment accéder à votre espace ?",
+            "steps": [f"Ouvrez l'application <strong>ManagerPresence</strong>", f"Votre structure <strong>\"{club_name}\"</strong> apparaît automatiquement", "Utilisez le mot de passe SU ci-dessus pour l'administration"],
+            "footer": "ManagerPresence — Données hébergées en France (Firebase europe-west9)"
+        },
+        "EN": {
+            "subject": f"✅ Your {club_name} space is operational!",
+            "ready": "✅ Your space is operational!",
+            "body": f"The structure <strong>\"{club_name}\"</strong> is ready.",
+            "su_title": "🔐 Your Super User password",
+            "su_warning": "⚠️ <strong>Keep this password safe.</strong><br>It cannot be recovered.",
+            "how_title": "How to access your space?",
+            "steps": ["Open the <strong>ManagerPresence</strong> app", f"Your structure <strong>\"{club_name}\"</strong> appears automatically", "Use the SU password above for administration"],
+            "footer": "ManagerPresence — Data hosted in France (Firebase europe-west9)"
+        },
+        "ES": {
+            "subject": f"✅ ¡Su espacio {club_name} está operativo!",
+            "ready": "✅ ¡Su espacio está operativo!",
+            "body": f"La estructura <strong>\"{club_name}\"</strong> está lista.",
+            "su_title": "🔐 Su contraseña de Super Usuario",
+            "su_warning": "⚠️ <strong>Guarde esta contraseña cuidadosamente.</strong><br>No puede ser recuperada.",
+            "how_title": "¿Cómo acceder a su espacio?",
+            "steps": ["Abra la aplicación <strong>ManagerPresence</strong>", f"Su estructura <strong>\"{club_name}\"</strong> aparece automáticamente", "Use la contraseña SU de arriba para la administración"],
+            "footer": "ManagerPresence — Datos alojados en Francia (Firebase europe-west9)"
+        },
+        "DE": {
+            "subject": f"✅ Ihr {club_name} Bereich ist betriebsbereit!",
+            "ready": "✅ Ihr Bereich ist betriebsbereit!",
+            "body": f"Die Einrichtung <strong>\"{club_name}\"</strong> ist bereit.",
+            "su_title": "🔐 Ihr Super-Benutzer-Passwort",
+            "su_warning": "⚠️ <strong>Bewahren Sie dieses Passwort sorgfältig auf.</strong><br>Es kann nicht wiederhergestellt werden.",
+            "how_title": "Wie greifen Sie auf Ihren Bereich zu?",
+            "steps": ["Öffnen Sie die <strong>ManagerPresence</strong>-App", f"Ihre Einrichtung <strong>\"{club_name}\"</strong> erscheint automatisch", "Verwenden Sie das obige SU-Passwort für die Verwaltung"],
+            "footer": "ManagerPresence — Daten in Frankreich gehostet (Firebase europe-west9)"
+        },
+        "IT": {
+            "subject": f"✅ Il tuo spazio {club_name} è operativo!",
+            "ready": "✅ Il tuo spazio è operativo!",
+            "body": f"La struttura <strong>\"{club_name}\"</strong> è pronta.",
+            "su_title": "🔐 La tua password Super Utente",
+            "su_warning": "⚠️ <strong>Conserva questa password con cura.</strong><br>Non può essere recuperata.",
+            "how_title": "Come accedere al tuo spazio?",
+            "steps": ["Apri l'app <strong>ManagerPresence</strong>", f"La tua struttura <strong>\"{club_name}\"</strong> appare automaticamente", "Usa la password SU sopra per l'amministrazione"],
+            "footer": "ManagerPresence — Dati ospitati in Francia (Firebase europe-west9)"
+        },
+        "PT": {
+            "subject": f"✅ O seu espaço {club_name} está operacional!",
+            "ready": "✅ O seu espaço está operacional!",
+            "body": f"A estrutura <strong>\"{club_name}\"</strong> está pronta.",
+            "su_title": "🔐 A sua palavra-passe Super Utilizador",
+            "su_warning": "⚠️ <strong>Guarde esta palavra-passe com cuidado.</strong><br>Não pode ser recuperada.",
+            "how_title": "Como aceder ao seu espaço?",
+            "steps": ["Abra a aplicação <strong>ManagerPresence</strong>", f"A sua estrutura <strong>\"{club_name}\"</strong> aparece automaticamente", "Use a palavra-passe SU acima para a administração"],
+            "footer": "ManagerPresence — Dados alojados em França (Firebase europe-west9)"
+        },
+    }
+    t = i18n.get(lang, i18n["FR"])
+    steps_html = "".join(f"<li>{s}</li>" for s in t["steps"])
+
     try:
         import urllib.request
         html = f"""<!DOCTYPE html>
@@ -1208,55 +1315,38 @@ def envoyer_email_confirmation(gmail, club_name, su_password):
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
   <h1 style="color:#1565C0;text-align:center">🏔️ ManagerPresence</h1>
   <div style="background:#E8F5E9;border-radius:8px;padding:20px;margin-bottom:20px">
-    <h2 style="color:#2E7D32;margin:0">✅ Votre espace est opérationnel !</h2>
+    <h2 style="color:#2E7D32;margin:0">{t['ready']}</h2>
   </div>
-  <p style="color:#555;font-size:16px">
-    La structure <strong>"{club_name}"</strong> est prête.
-  </p>
-  <div style="background:#FFF3E0;border-radius:8px;padding:20px;margin:20px 0;
-              border-left:4px solid #E65100">
-    <h3 style="color:#E65100;margin-top:0">🔐 Votre mot de passe Super Utilisateur</h3>
+  <p style="color:#555;font-size:16px">{t['body']}</p>
+  <div style="background:#FFF3E0;border-radius:8px;padding:20px;margin:20px 0;border-left:4px solid #E65100">
+    <h3 style="color:#E65100;margin-top:0">{t['su_title']}</h3>
     <div style="background:white;border-radius:4px;padding:12px;text-align:center;
                 font-family:monospace;font-size:22px;font-weight:bold;
                 color:#E65100;letter-spacing:2px">
       {su_password}
     </div>
-    <p style="color:#BF360C;font-size:13px;margin-bottom:0">
-      ⚠️ <strong>Conservez ce mot de passe précieusement.</strong><br>
-      Il ne peut pas être récupéré.
-    </p>
+    <p style="color:#BF360C;font-size:13px;margin-bottom:0">{t['su_warning']}</p>
   </div>
-  <h3>Comment accéder à votre espace ?</h3>
-  <ol style="color:#555;font-size:15px;line-height:1.8">
-    <li>Ouvrez l'application <strong>ManagerPresence</strong></li>
-    <li>Votre structure <strong>"{club_name}"</strong> apparaît automatiquement</li>
-    <li>Utilisez le mot de passe SU ci-dessus pour l'administration</li>
-  </ol>
+  <h3>{t['how_title']}</h3>
+  <ol style="color:#555;font-size:15px;line-height:1.8">{steps_html}</ol>
   <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
-  <p style="color:#aaa;font-size:12px;text-align:center">
-    ManagerPresence — Données hébergées en France (Firebase europe-west9)
-  </p>
+  <p style="color:#aaa;font-size:12px;text-align:center">{t['footer']}</p>
 </body></html>"""
-        import urllib.request
         payload = json.dumps({
             "sender": {"name": "ManagerPresence", "email": "cp.support.dev@gmail.com"},
             "to": [{"email": gmail}],
-            "subject": f"✅ Votre espace {club_name} est opérationnel !",
+            "subject": t["subject"],
             "htmlContent": html
         }).encode("utf-8")
         req = urllib.request.Request(
             "https://api.brevo.com/v3/smtp/email",
             data=payload,
-            headers={
-                "api-key": BREVO_API_KEY,
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            },
+            headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json", "Accept": "application/json"},
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read().decode())
-            print(f"[CONFIRMATION] Email Brevo envoyé à {gmail} — id: {result.get('messageId')}")
+            print(f"[CONFIRMATION] Email Brevo envoyé à {gmail} (lang={lang}) — id: {result.get('messageId')}")
         return True
     except Exception as e:
         print(f"[CONFIRMATION] Erreur envoi email Brevo: {e}")
@@ -1365,11 +1455,14 @@ def creer_projet_firebase(token_data, club_name, gmail):
 def create_structure():
     """
     Étape 1 : L'app Android initie la création.
-    Body: { "club_name": str, "gmail": str }
+    Body: { "club_name": str, "gmail": str, "lang": str (optional, default "FR") }
     """
     data      = request.get_json() or {}
     club_name = data.get("club_name", "").strip()
     gmail     = data.get("gmail", "").strip().lower()
+    lang      = data.get("lang", "FR").strip().upper()
+    if lang not in ("FR", "EN", "ES", "DE", "IT", "PT"):
+        lang = "FR"
 
     if not club_name:
         return jsonify({"error": "Nom de structure manquant"}), 400
@@ -1382,6 +1475,7 @@ def create_structure():
     session_data = {
         "club_name":        club_name,
         "gmail":            gmail,
+        "lang":             lang,
         "token":            token,
         "created_at":       datetime.now().isoformat(),
         "expires_at":       expires_at,
@@ -1397,13 +1491,11 @@ def create_structure():
 
     setup_url = f"{SERVER_BASE_URL}/setup/{token}"
 
-    # Répondre immédiatement à l'app, envoyer les emails en arrière-plan
-    # Envoyer email à l'utilisateur + notifier l'admin
     def envoyer_emails():
-        envoyer_email_setup(gmail, club_name, setup_url)
+        envoyer_email_setup(gmail, club_name, setup_url, lang)
         envoyer_notification(
             "🆕 Nouvelle structure en cours de création",
-            f"Structure: {club_name}\nGmail: {gmail}\nToken: {token}\nURL setup: {setup_url}"
+            f"Structure: {club_name}\nGmail: {gmail}\nLang: {lang}\nToken: {token}\nURL setup: {setup_url}"
         )
 
     threading.Thread(target=envoyer_emails, daemon=True).start()
@@ -1417,17 +1509,104 @@ def create_structure():
 
 
 @app.route("/setup/<token>", methods=["GET"])
+def web_t(lang, key):
+    """Traduction pour les pages web générées par le serveur."""
+    WEB_I18N = {
+        # Page setup principale
+        "setup_title":           {"FR": "Créer votre espace — ManagerPresence", "EN": "Create your space — ManagerPresence", "ES": "Crear su espacio — ManagerPresence", "DE": "Ihren Bereich erstellen — ManagerPresence", "IT": "Crea il tuo spazio — ManagerPresence", "PT": "Criar o seu espaço — ManagerPresence"},
+        "setup_creating":        {"FR": "Création de votre espace", "EN": "Creating your space", "ES": "Creando su espacio", "DE": "Ihren Bereich erstellen", "IT": "Creazione del tuo spazio", "PT": "A criar o seu espaço"},
+        "setup_step1":           {"FR": "1️⃣ Connectez-vous avec Google", "EN": "1️⃣ Sign in with Google", "ES": "1️⃣ Inicie sesión con Google", "DE": "1️⃣ Mit Google anmelden", "IT": "1️⃣ Accedi con Google", "PT": "1️⃣ Inicie sessão com a Google"},
+        "setup_step2":           {"FR": "2️⃣ Autorisez la création Firebase", "EN": "2️⃣ Authorize Firebase creation", "ES": "2️⃣ Autorice la creación de Firebase", "DE": "2️⃣ Firebase-Erstellung autorisieren", "IT": "2️⃣ Autorizza la creazione Firebase", "PT": "2️⃣ Autorize a criação do Firebase"},
+        "setup_step3":           {"FR": "3️⃣ Définissez votre mot de passe SU", "EN": "3️⃣ Set your SU password", "ES": "3️⃣ Defina su contraseña SU", "DE": "3️⃣ SU-Passwort festlegen", "IT": "3️⃣ Imposta la tua password SU", "PT": "3️⃣ Defina a sua palavra-passe SU"},
+        "setup_own_account":     {"FR": "Votre espace sera créé sur <strong>votre propre compte Google</strong>.<br>Nous n'avons accès à aucune de vos données.", "EN": "Your space will be created on <strong>your own Google account</strong>.<br>We have no access to any of your data.", "ES": "Su espacio se creará en <strong>su propia cuenta de Google</strong>.<br>No tenemos acceso a ninguno de sus datos.", "DE": "Ihr Bereich wird auf <strong>Ihrem eigenen Google-Konto</strong> erstellt.<br>Wir haben keinen Zugriff auf Ihre Daten.", "IT": "Il tuo spazio sarà creato sul <strong>tuo account Google</strong>.<br>Non abbiamo accesso ai tuoi dati.", "PT": "O seu espaço será criado na <strong>sua própria conta Google</strong>.<br>Não temos acesso a nenhum dos seus dados."},
+        "setup_we_use":          {"FR": "✅ Ce que nous utilisons :", "EN": "✅ What we use:", "ES": "✅ Lo que usamos:", "DE": "✅ Was wir verwenden:", "IT": "✅ Cosa utilizziamo:", "PT": "✅ O que utilizamos:"},
+        "setup_use1":            {"FR": "Votre email pour créer votre espace Firebase", "EN": "Your email to create your Firebase space", "ES": "Su email para crear su espacio Firebase", "DE": "Ihre E-Mail zum Erstellen Ihres Firebase-Bereichs", "IT": "La tua email per creare il tuo spazio Firebase", "PT": "O seu email para criar o seu espaço Firebase"},
+        "setup_use2":            {"FR": "Les droits pour configurer votre projet Google Cloud", "EN": "Rights to configure your Google Cloud project", "ES": "Los derechos para configurar su proyecto Google Cloud", "DE": "Rechte zum Konfigurieren Ihres Google Cloud-Projekts", "IT": "I diritti per configurare il tuo progetto Google Cloud", "PT": "Os direitos para configurar o seu projeto Google Cloud"},
+        "setup_no_use":          {"FR": "❌ Ce que nous ne faisons PAS :", "EN": "❌ What we do NOT do:", "ES": "❌ Lo que NO hacemos:", "DE": "❌ Was wir NICHT tun:", "IT": "❌ Cosa NON facciamo:", "PT": "❌ O que NÃO fazemos:"},
+        "setup_no1":             {"FR": "Nous ne lisons pas vos emails ni vos contacts", "EN": "We do not read your emails or contacts", "ES": "No leemos sus emails ni sus contactos", "DE": "Wir lesen weder Ihre E-Mails noch Ihre Kontakte", "IT": "Non leggiamo le tue email né i tuoi contatti", "PT": "Não lemos os seus emails nem os seus contactos"},
+        "setup_no2":             {"FR": "Nous ne stockons pas votre token Google", "EN": "We do not store your Google token", "ES": "No almacenamos su token de Google", "DE": "Wir speichern Ihr Google-Token nicht", "IT": "Non memorizziamo il tuo token Google", "PT": "Não armazenamos o seu token Google"},
+        "setup_no3":             {"FR": "Nous ne revendons aucune donnée", "EN": "We do not resell any data", "ES": "No revendemos ningún dato", "DE": "Wir verkaufen keine Daten weiter", "IT": "Non rivendiamo nessun dato", "PT": "Não revendemos quaisquer dados"},
+        "setup_oauth_once":      {"FR": "L'accès OAuth est utilisé <strong>une seule fois</strong> lors de la création,\nrévocable depuis votre compte Google à tout moment.", "EN": "OAuth access is used <strong>only once</strong> during creation,\nrevocable from your Google account at any time.", "ES": "El acceso OAuth se usa <strong>solo una vez</strong> durante la creación,\nrevocable desde su cuenta de Google en cualquier momento.", "DE": "Der OAuth-Zugriff wird <strong>nur einmal</strong> bei der Erstellung verwendet,\njederzeit über Ihr Google-Konto widerrufbar.", "IT": "L'accesso OAuth viene utilizzato <strong>solo una volta</strong> durante la creazione,\nrevocabile dal tuo account Google in qualsiasi momento.", "PT": "O acesso OAuth é utilizado <strong>apenas uma vez</strong> durante a criação,\nrevogável a partir da sua conta Google a qualquer momento."},
+        "setup_privacy":         {"FR": "📄 Politique de confidentialité complète", "EN": "📄 Full privacy policy", "ES": "📄 Política de privacidad completa", "DE": "📄 Vollständige Datenschutzrichtlinie", "IT": "📄 Informativa sulla privacy completa", "PT": "📄 Política de privacidade completa"},
+        "setup_checkboxes":      {"FR": "Sur l'écran suivant, Google vous demandera d'autoriser ces deux accès — cochez les deux :", "EN": "On the next screen, Google will ask you to authorize these two accesses — check both:", "ES": "En la siguiente pantalla, Google le pedirá que autorice estos dos accesos — marque ambos:", "DE": "Auf dem nächsten Bildschirm wird Google Sie bitten, diese beiden Zugriffe zu autorisieren — aktivieren Sie beide:", "IT": "Nella schermata successiva, Google ti chiederà di autorizzare questi due accessi — seleziona entrambi:", "PT": "No ecrã seguinte, a Google pedirá que autorize estes dois acessos — selecione ambos:"},
+        "setup_check1":          {"FR": "🔥 <strong>Afficher et administrer Firebase</strong> — pour créer votre projet", "EN": "🔥 <strong>View and administer Firebase</strong> — to create your project", "ES": "🔥 <strong>Ver y administrar Firebase</strong> — para crear su proyecto", "DE": "🔥 <strong>Firebase anzeigen und verwalten</strong> — um Ihr Projekt zu erstellen", "IT": "🔥 <strong>Visualizza e amministra Firebase</strong> — per creare il tuo progetto", "PT": "🔥 <strong>Ver e administrar o Firebase</strong> — para criar o seu projeto"},
+        "setup_check2":          {"FR": "☁️ <strong>Voir et configurer Google Cloud</strong> — pour activer Firestore", "EN": "☁️ <strong>View and configure Google Cloud</strong> — to activate Firestore", "ES": "☁️ <strong>Ver y configurar Google Cloud</strong> — para activar Firestore", "DE": "☁️ <strong>Google Cloud anzeigen und konfigurieren</strong> — um Firestore zu aktivieren", "IT": "☁️ <strong>Visualizza e configura Google Cloud</strong> — per attivare Firestore", "PT": "☁️ <strong>Ver e configurar o Google Cloud</strong> — para ativar o Firestore"},
+        "setup_signin_google":   {"FR": "Se connecter avec Google", "EN": "Sign in with Google", "ES": "Iniciar sesión con Google", "DE": "Mit Google anmelden", "IT": "Accedi con Google", "PT": "Iniciar sessão com a Google"},
+        "setup_rgpd":            {"FR": "Données hébergées en France (Firebase europe-west9).<br>Suppression possible depuis l'application à tout moment.", "EN": "Data hosted in France (Firebase europe-west9).<br>Deletion possible from the app at any time.", "ES": "Datos alojados en Francia (Firebase europe-west9).<br>Eliminación posible desde la aplicación en cualquier momento.", "DE": "Daten in Frankreich gehostet (Firebase europe-west9).<br>Löschung jederzeit über die App möglich.", "IT": "Dati ospitati in Francia (Firebase europe-west9).<br>Eliminazione possibile dall'app in qualsiasi momento.", "PT": "Dados alojados em França (Firebase europe-west9).<br>Eliminação possível a partir da aplicação a qualquer momento."},
+        # Page callback OAuth
+        "oauth_success_title":   {"FR": "Compte Google connecté !", "EN": "Google account connected!", "ES": "¡Cuenta de Google conectada!", "DE": "Google-Konto verbunden!", "IT": "Account Google connesso!", "PT": "Conta Google ligada!"},
+        "oauth_creating":        {"FR": "Création de votre espace Firebase en cours...", "EN": "Creating your Firebase space...", "ES": "Creando su espacio Firebase...", "DE": "Ihr Firebase-Bereich wird erstellt...", "IT": "Creazione del tuo spazio Firebase in corso...", "PT": "A criar o seu espaço Firebase..."},
+        "oauth_return_app":      {"FR": "📱 Retournez dans l'application ManagerPresence", "EN": "📱 Return to the ManagerPresence app", "ES": "📱 Regrese a la aplicación ManagerPresence", "DE": "📱 Kehren Sie zur ManagerPresence-App zurück", "IT": "📱 Torna all'app ManagerPresence", "PT": "📱 Regresse à aplicação ManagerPresence"},
+        "oauth_return_btn":      {"FR": "📱 Retourner dans l'app →", "EN": "📱 Return to app →", "ES": "📱 Regresar a la app →", "DE": "📱 Zur App zurückkehren →", "IT": "📱 Torna all'app →", "PT": "📱 Regressar à app →"},
+        "oauth_if_btn_fails":    {"FR": "Si le bouton ne fonctionne pas, revenez manuellement dans l'app.<br>Elle reprendra automatiquement.", "EN": "If the button doesn't work, return manually to the app.<br>It will resume automatically.", "ES": "Si el botón no funciona, regrese manualmente a la app.<br>Se reanudará automáticamente.", "DE": "Falls der Button nicht funktioniert, kehren Sie manuell zur App zurück.<br>Sie wird automatisch fortgesetzt.", "IT": "Se il pulsante non funziona, torna manualmente all'app.<br>Riprenderà automaticamente.", "PT": "Se o botão não funcionar, regresse manualmente à app.<br>Ela retomará automaticamente."},
+        # Page progression
+        "config_title":          {"FR": "Configuration en cours...", "EN": "Configuration in progress...", "ES": "Configuración en curso...", "DE": "Konfiguration läuft...", "IT": "Configurazione in corso...", "PT": "Configuração em curso..."},
+        "config_configuring":    {"FR": "Nous configurons", "EN": "We are configuring", "ES": "Estamos configurando", "DE": "Wir konfigurieren", "IT": "Stiamo configurando", "PT": "Estamos a configurar"},
+        "config_duration":       {"FR": "Cette opération prend environ 60 secondes.<br>Ne fermez pas cette page.", "EN": "This operation takes about 60 seconds.<br>Do not close this page.", "ES": "Esta operación tarda unos 60 segundos.<br>No cierre esta página.", "DE": "Dieser Vorgang dauert etwa 60 Sekunden.<br>Schließen Sie diese Seite nicht.", "IT": "Questa operazione richiede circa 60 secondi.<br>Non chiudere questa pagina.", "PT": "Esta operação demora cerca de 60 segundos.<br>Não feche esta página."},
+        "config_s0":             {"FR": "🔍 Création du projet Google Cloud", "EN": "🔍 Creating Google Cloud project", "ES": "🔍 Creando proyecto Google Cloud", "DE": "🔍 Google Cloud-Projekt erstellen", "IT": "🔍 Creazione progetto Google Cloud", "PT": "🔍 A criar projeto Google Cloud"},
+        "config_s1":             {"FR": "📱 Enregistrement de l'application Android", "EN": "📱 Registering Android app", "ES": "📱 Registrando aplicación Android", "DE": "📱 Android-App registrieren", "IT": "📱 Registrazione app Android", "PT": "📱 A registar a aplicação Android"},
+        "config_s2":             {"FR": "🔥 Configuration de Firestore", "EN": "🔥 Configuring Firestore", "ES": "🔥 Configurando Firestore", "DE": "🔥 Firestore konfigurieren", "IT": "🔥 Configurazione di Firestore", "PT": "🔥 A configurar o Firestore"},
+        "config_s3":             {"FR": "🔒 Règles de sécurité", "EN": "🔒 Security rules", "ES": "🔒 Reglas de seguridad", "DE": "🔒 Sicherheitsregeln", "IT": "🔒 Regole di sicurezza", "PT": "🔒 Regras de segurança"},
+        "config_s4":             {"FR": "✅ Finalisation", "EN": "✅ Finalization", "ES": "✅ Finalización", "DE": "✅ Abschluss", "IT": "✅ Finalizzazione", "PT": "✅ Finalização"},
+        "config_timeout":        {"FR": "Délai dépassé. Réessayez.", "EN": "Timeout. Please retry.", "ES": "Tiempo agotado. Inténtelo de nuevo.", "DE": "Zeitüberschreitung. Bitte erneut versuchen.", "IT": "Timeout. Riprova.", "PT": "Tempo esgotado. Tente novamente."},
+        "config_retry":          {"FR": "← Retour", "EN": "← Back", "ES": "← Atrás", "DE": "← Zurück", "IT": "← Indietro", "PT": "← Voltar"},
+        # Page mot de passe SU
+        "su_title":              {"FR": "Mot de passe SU", "EN": "SU Password", "ES": "Contraseña SU", "DE": "SU-Passwort", "IT": "Password SU", "PT": "Palavra-passe SU"},
+        "su_structure":          {"FR": "Structure :", "EN": "Structure:", "ES": "Estructura:", "DE": "Einrichtung:", "IT": "Struttura:", "PT": "Estrutura:"},
+        "su_warning":            {"FR": "⚠️ Ce mot de passe donne accès aux fonctions d'administration avancées.<br><strong>Il ne peut pas être récupéré.</strong> Notez-le précieusement.", "EN": "⚠️ This password gives access to advanced administration functions.<br><strong>It cannot be recovered.</strong> Keep it safe.", "ES": "⚠️ Esta contraseña da acceso a las funciones de administración avanzadas.<br><strong>No puede recuperarse.</strong> Guárdela con cuidado.", "DE": "⚠️ Dieses Passwort gibt Zugang zu erweiterten Verwaltungsfunktionen.<br><strong>Es kann nicht wiederhergestellt werden.</strong> Bewahren Sie es sorgfältig auf.", "IT": "⚠️ Questa password dà accesso alle funzioni di amministrazione avanzate.<br><strong>Non può essere recuperata.</strong> Conservala con cura.", "PT": "⚠️ Esta palavra-passe dá acesso às funções de administração avançadas.<br><strong>Não pode ser recuperada.</strong> Guarde-a com cuidado."},
+        "su_placeholder1":       {"FR": "Votre mot de passe SU (min. 8 caractères)", "EN": "Your SU password (min. 8 characters)", "ES": "Su contraseña SU (mín. 8 caracteres)", "DE": "Ihr SU-Passwort (mind. 8 Zeichen)", "IT": "La tua password SU (min. 8 caratteri)", "PT": "A sua palavra-passe SU (mín. 8 caracteres)"},
+        "su_placeholder2":       {"FR": "Confirmez le mot de passe", "EN": "Confirm the password", "ES": "Confirme la contraseña", "DE": "Passwort bestätigen", "IT": "Conferma la password", "PT": "Confirme a palavra-passe"},
+        "su_btn":                {"FR": "✅ Terminer la configuration", "EN": "✅ Complete configuration", "ES": "✅ Completar la configuración", "DE": "✅ Konfiguration abschließen", "IT": "✅ Completa la configurazione", "PT": "✅ Concluir a configuração"},
+        "su_saving":             {"FR": "Enregistrement...", "EN": "Saving...", "ES": "Guardando...", "DE": "Speichern...", "IT": "Salvataggio...", "PT": "A guardar..."},
+        "su_mismatch":           {"FR": "Les mots de passe ne correspondent pas.", "EN": "Passwords do not match.", "ES": "Las contraseñas no coinciden.", "DE": "Passwörter stimmen nicht überein.", "IT": "Le password non corrispondono.", "PT": "As palavras-passe não coincidem."},
+        "su_check_email":        {"FR": "✅ Vérifiez votre email !", "EN": "✅ Check your email!", "ES": "✅ ¡Revise su email!", "DE": "✅ Überprüfen Sie Ihre E-Mail!", "IT": "✅ Controlla la tua email!", "PT": "✅ Verifique o seu email!"},
+        "su_done":               {"FR": "✅ Configuration terminée !", "EN": "✅ Configuration complete!", "ES": "✅ ¡Configuración completada!", "DE": "✅ Konfiguration abgeschlossen!", "IT": "✅ Configurazione completata!", "PT": "✅ Configuração concluída!"},
+        "su_min_chars":          {"FR": "Minimum 8 caractères.", "EN": "Minimum 8 characters.", "ES": "Mínimo 8 caracteres.", "DE": "Mindestens 8 Zeichen.", "IT": "Minimo 8 caratteri.", "PT": "Mínimo 8 caracteres."},
+        # Page succès finale
+        "success_title":         {"FR": "Votre espace est prêt !", "EN": "Your space is ready!", "ES": "¡Su espacio está listo!", "DE": "Ihr Bereich ist fertig!", "IT": "Il tuo spazio è pronto!", "PT": "O seu espaço está pronto!"},
+        "success_body":          {"FR": "est opérationnel.", "EN": "is operational.", "ES": "está operativo.", "DE": "ist betriebsbereit.", "IT": "è operativo.", "PT": "está operacional."},
+        "success_email":         {"FR": "📧 Email de confirmation envoyé avec votre mot de passe SU.", "EN": "📧 Confirmation email sent with your SU password.", "ES": "📧 Email de confirmación enviado con su contraseña SU.", "DE": "📧 Bestätigungs-E-Mail mit Ihrem SU-Passwort gesendet.", "IT": "📧 Email di conferma inviata con la tua password SU.", "PT": "📧 Email de confirmação enviado com a sua palavra-passe SU."},
+        "success_open_app":      {"FR": "📱 Ouvrez l'application ManagerPresence.", "EN": "📱 Open the ManagerPresence app.", "ES": "📱 Abra la aplicación ManagerPresence.", "DE": "📱 Öffnen Sie die ManagerPresence-App.", "IT": "📱 Apri l'app ManagerPresence.", "PT": "📱 Abra a aplicação ManagerPresence."},
+        "success_auto":          {"FR": "🎉 Votre structure apparaît automatiquement.", "EN": "🎉 Your structure appears automatically.", "ES": "🎉 Su estructura aparece automáticamente.", "DE": "🎉 Ihre Einrichtung erscheint automatisch.", "IT": "🎉 La tua struttura appare automaticamente.", "PT": "🎉 A sua estrutura aparece automaticamente."},
+        "success_close":         {"FR": "Vous pouvez fermer cette page.", "EN": "You can close this page.", "ES": "Puede cerrar esta página.", "DE": "Sie können diese Seite schließen.", "IT": "Puoi chiudere questa pagina.", "PT": "Pode fechar esta página."},
+        # Erreurs communes
+        "err_invalid_link":      {"FR": "❌ Lien invalide ou expiré", "EN": "❌ Invalid or expired link", "ES": "❌ Enlace inválido o expirado", "DE": "❌ Ungültiger oder abgelaufener Link", "IT": "❌ Link non valido o scaduto", "PT": "❌ Link inválido ou expirado"},
+        "err_restart":           {"FR": "Recommencez la création depuis l'application.", "EN": "Restart the creation from the app.", "ES": "Reinicie la creación desde la aplicación.", "DE": "Starten Sie die Erstellung erneut über die App.", "IT": "Riavvia la creazione dall'app.", "PT": "Recomece a criação a partir da aplicação."},
+        "err_expired_link":      {"FR": "⏱️ Lien expiré", "EN": "⏱️ Link expired", "ES": "⏱️ Enlace expirado", "DE": "⏱️ Link abgelaufen", "IT": "⏱️ Link scaduto", "PT": "⏱️ Link expirado"},
+        "err_expired_body":      {"FR": "Ce lien était valable 24 heures. Recommencez depuis l'application.", "EN": "This link was valid for 24 hours. Please restart from the app.", "ES": "Este enlace era válido por 24 horas. Reinicie desde la aplicación.", "DE": "Dieser Link war 24 Stunden gültig. Bitte erneut über die App starten.", "IT": "Questo link era valido per 24 ore. Riavvia dall'app.", "PT": "Este link era válido por 24 horas. Recomece a partir da aplicação."},
+        "err_already_done":      {"FR": "✅ Votre espace existe déjà !", "EN": "✅ Your space already exists!", "ES": "✅ ¡Su espacio ya existe!", "DE": "✅ Ihr Bereich existiert bereits!", "IT": "✅ Il tuo spazio esiste già!", "PT": "✅ O seu espaço já existe!"},
+        "err_already_open_app":  {"FR": "Ouvrez l'application ManagerPresence pour y accéder.", "EN": "Open the ManagerPresence app to access it.", "ES": "Abra la aplicación ManagerPresence para acceder.", "DE": "Öffnen Sie die ManagerPresence-App, um darauf zuzugreifen.", "IT": "Apri l'app ManagerPresence per accedervi.", "PT": "Abra a aplicação ManagerPresence para aceder."},
+        "err_denied":            {"FR": "❌ Autorisation refusée", "EN": "❌ Authorization denied", "ES": "❌ Autorización denegada", "DE": "❌ Autorisierung verweigert", "IT": "❌ Autorizzazione negata", "PT": "❌ Autorização recusada"},
+        "err_denied_body":       {"FR": "Fermez cette page et recommencez depuis l'application.", "EN": "Close this page and restart from the app.", "ES": "Cierre esta página y reinicie desde la aplicación.", "DE": "Schließen Sie diese Seite und starten Sie erneut über die App.", "IT": "Chiudi questa pagina e riavvia dall'app.", "PT": "Feche esta página e recomece a partir da aplicação."},
+    }
+    entry = WEB_I18N.get(key, {})
+    return entry.get(lang, entry.get("FR", key))
+
+
 def setup_page(token):
     """Étape 2 : Page HTML affichée quand l'utilisateur clique le lien email."""
     session = charger_setup(token)
 
     if not session:
         return """<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>Lien invalide</title></head>
+<title>ManagerPresence</title></head>
 <body style="font-family:Arial;text-align:center;padding:60px;color:#333">
 <h1>🏔️ ManagerPresence</h1>
-<h2 style="color:#C62828">❌ Lien invalide ou expiré</h2>
-<p>Recommencez la création depuis l'application.</p>
+<h2 id="title" style="color:#C62828"></h2>
+<p id="body"></p>
+<script>
+var lang = (navigator.language || 'fr').substring(0,2).toLowerCase();
+var t = {
+  fr: ['❌ Lien invalide ou expiré', 'Recommencez la création depuis l\'application.'],
+  en: ['❌ Invalid or expired link', 'Restart the creation from the app.'],
+  es: ['❌ Enlace inválido o expirado', 'Reinicie la creación desde la aplicación.'],
+  de: ['❌ Ungültiger oder abgelaufener Link', 'Starten Sie die Erstellung erneut über die App.'],
+  it: ['❌ Link non valido o scaduto', 'Riavvia la creazione dall\'app.'],
+  pt: ['❌ Link inválido ou expirado', 'Recomece a criação a partir da aplicação.']
+}[lang] || t.fr;
+document.getElementById('title').textContent = t[0];
+document.getElementById('body').textContent = t[1];
+</script>
 </body></html>""", 404
 
     if int(time.time()) > session.get("expires_at", 0):
@@ -1449,13 +1628,15 @@ def setup_page(token):
 
     club_name = session.get("club_name", "")
     gmail     = session.get("gmail", "")
+    lang      = session.get("lang", "FR")
+    T = lambda k: web_t(lang, k)
 
     return f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Créer votre espace — ManagerPresence</title>
+  <title>{T('setup_title')}</title>
   <style>
     *{{box-sizing:border-box;margin:0;padding:0}}
     body{{font-family:Arial,sans-serif;background:#F5F5F5;min-height:100vh;
@@ -1480,39 +1661,35 @@ def setup_page(token):
   <div class="card">
     <div style="font-size:48px;margin-bottom:8px">🏔️</div>
     <h1 style="color:#1565C0;font-size:22px;margin-bottom:4px">ManagerPresence</h1>
-    <p style="color:#888;font-size:13px;margin-bottom:16px">Création de votre espace</p>
+    <p style="color:#888;font-size:13px;margin-bottom:16px">{T('setup_creating')}</p>
     <div class="club">📋 {club_name}</div>
     <div class="gmail">📧 {gmail}</div>
     <div class="steps">
-      <div>1️⃣ &nbsp;Connectez-vous avec Google</div>
-      <div>2️⃣ &nbsp;Autorisez la création Firebase</div>
-      <div>3️⃣ &nbsp;Définissez votre mot de passe SU</div>
+      <div>{T('setup_step1')}</div>
+      <div>{T('setup_step2')}</div>
+      <div>{T('setup_step3')}</div>
     </div>
     <p style="color:#555;font-size:14px;margin-bottom:20px">
-      Votre espace sera créé sur <strong>votre propre compte Google</strong>.<br>
-      Nous n'avons accès à aucune de vos données.
+      {T('setup_own_account')}
     </p>
     <div style="background:#E8F5E9;border-radius:8px;padding:14px;margin-bottom:16px;text-align:left;font-size:13px;color:#2E7D32">
-      <strong>✅ Ce que nous utilisons :</strong><br>
-      • Votre email pour créer votre espace Firebase<br>
-      • Les droits pour configurer votre projet Google Cloud<br><br>
-      <strong>❌ Ce que nous ne faisons PAS :</strong><br>
-      • Nous ne lisons pas vos emails ni vos contacts<br>
-      • Nous ne stockons pas votre token Google<br>
-      • Nous ne revendons aucune donnée<br><br>
-      L'accès OAuth est utilisé <strong>une seule fois</strong> lors de la création,
-      puis révocable depuis votre compte Google à tout moment.<br><br>
-      <a href="/privacy" target="_blank" style="color:#1565C0">📄 Politique de confidentialité complète</a>
+      <strong>{T('setup_we_use')}</strong><br>
+      • {T('setup_use1')}<br>
+      • {T('setup_use2')}<br><br>
+      <strong>{T('setup_no_use')}</strong><br>
+      • {T('setup_no1')}<br>
+      • {T('setup_no2')}<br>
+      • {T('setup_no3')}<br><br>
+      {T('setup_oauth_once')}<br><br>
+      <a href="/privacy" target="_blank" style="color:#1565C0">{T('setup_privacy')}</a>
     </div>
-
     <p style="color:#555;font-size:13px;margin-bottom:12px">
-      Sur l'écran suivant, Google vous demandera d'autoriser ces deux accès — cochez les deux :
+      {T('setup_checkboxes')}
     </p>
     <div style="background:#FFF9C4;border-radius:8px;padding:12px;margin-bottom:16px;font-size:13px;color:#333;text-align:left">
-      🔥 <strong>Afficher et administrer Firebase</strong> — pour créer votre projet<br>
-      ☁️ <strong>Voir et configurer Google Cloud</strong> — pour activer Firestore
+      {T('setup_check1')}<br>
+      {T('setup_check2')}
     </div>
-
     <a class="btn" href="/setup/{token}/oauth">
       <svg width="20" height="20" viewBox="0 0 24 24">
         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -1520,12 +1697,9 @@ def setup_page(token):
         <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
         <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
       </svg>
-      Se connecter avec Google
+      {T('setup_signin_google')}
     </a>
-    <p class="rgpd">
-      Données hébergées en France (Firebase europe-west9).<br>
-      Suppression possible depuis l'application à tout moment.
-    </p>
+    <p class="rgpd">{T('setup_rgpd')}</p>
   </div>
 </body>
 </html>"""
@@ -1604,16 +1778,16 @@ def setup_oauth_callback():
 
     threading.Thread(target=echanger_oauth_code, daemon=True).start()
 
-    firebase_url = f"https://console.firebase.google.com/?hl=fr"
     deep_link = f"managerpresence://setup/{token}"
+    lang = session.get("lang", "FR") if session else "FR"
+    T = lambda k: web_t(lang, k)
 
     return f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Authentification réussie — ManagerPresence</title>
-  <title>Authentification réussie — ManagerPresence</title>
+  <title>{T('oauth_success_title')} — ManagerPresence</title>
   <style>
     *{{box-sizing:border-box;margin:0;padding:0}}
     body{{font-family:Arial,sans-serif;background:#F5F5F5;min-height:100vh;
@@ -1624,35 +1798,23 @@ def setup_oauth_callback():
               border-radius:8px;padding:16px 20px;font-size:16px;font-weight:bold;margin:20px 0}}
     .info{{background:#E8F5E9;border-radius:8px;padding:14px;
            font-size:13px;color:#2E7D32;margin:12px 0;text-align:left}}
-    .steps{{background:#FFF9C4;border-radius:8px;padding:14px;
-            font-size:12px;color:#333;text-align:left;line-height:1.9;margin:12px 0}}
   </style>
 </head>
 <body>
   <div class="card">
     <div style="font-size:48px;margin-bottom:8px">✅</div>
-    <h2 style="color:#2E7D32;margin-bottom:8px">Compte Google connecté !</h2>
+    <h2 style="color:#2E7D32;margin-bottom:8px">{T('oauth_success_title')}</h2>
     <p style="color:#555;font-size:14px;margin-bottom:16px">
-      Bonjour <strong>{gmail}</strong><br>
-      Il reste une étape : créer votre projet Firebase.
+      <strong>{gmail}</strong><br>
+      {T('oauth_creating')}
     </p>
     <div class="info">
-      📱 <strong>Retournez dans l'application ManagerPresence</strong><br>
-      Elle vous guidera pour créer votre projet Firebase.
+      {T('oauth_return_app')}
     </div>
-    <a class="btn-app" href="{deep_link}">
-      📱 Retourner dans l'app →
-    </a>
+    <a class="btn-app" href="{deep_link}">{T('oauth_return_btn')}</a>
     <p style="color:#aaa;font-size:11px;margin:8px 0">
-      Si le bouton ne fonctionne pas, revenez manuellement dans l'app.<br>
-      Elle reprendra automatiquement.
+      {T('oauth_if_btn_fails')}
     </p>
-    <div class="steps">
-      <strong>📋 Ce qui vous attend dans l'app :</strong><br>
-      1. Cliquez «Ouvrir Firebase Console»<br>
-      2. Créez un projet (désactivez Gemini et Analytics)<br>
-      3. Revenez dans l'app — configuration automatique ✅
-    </div>
   </div>
 <script>
   window.onload = function() {{
@@ -1966,13 +2128,15 @@ def setup_done_page(token):
         return redirect(f"/setup/{token}")
 
     club_name = session.get("club_name", "")
+    lang = session.get("lang", "FR")
+    T = lambda k: web_t(lang, k)
 
     return f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Mot de passe SU — ManagerPresence</title>
+  <title>{T('su_title')} — ManagerPresence</title>
   <style>
     *{{box-sizing:border-box;margin:0;padding:0}}
     body{{font-family:Arial;background:#F5F5F5;min-height:100vh;
@@ -1994,25 +2158,26 @@ def setup_done_page(token):
 <body>
   <div class="card">
     <div style="text-align:center;font-size:40px;margin-bottom:16px">🔐</div>
-    <h1 style="text-align:center;color:#1565C0;margin-bottom:8px">Mot de passe SU</h1>
+    <h1 style="text-align:center;color:#1565C0;margin-bottom:8px">{T('su_title')}</h1>
     <p style="color:#555;text-align:center;margin-bottom:20px;font-size:14px">
-      Structure : <strong>{club_name}</strong>
+      {T('su_structure')} <strong>{club_name}</strong>
     </p>
-    <div class="warn">
-      ⚠️ Ce mot de passe donne accès aux fonctions d'administration avancées.<br>
-      <strong>Il ne peut pas être récupéré.</strong> Notez-le précieusement.
-    </div>
-    <input type="password" id="pwd1" placeholder="Votre mot de passe SU (min. 8 caractères)"
+    <div class="warn">{T('su_warning')}</div>
+    <input type="password" id="pwd1" placeholder="{T('su_placeholder1')}"
            minlength="8" oninput="verifier()">
-    <input type="password" id="pwd2" placeholder="Confirmez le mot de passe"
+    <input type="password" id="pwd2" placeholder="{T('su_placeholder2')}"
            minlength="8" oninput="verifier()">
-    <button id="btn" onclick="valider()" disabled>✅ Terminer la configuration</button>
+    <button id="btn" onclick="valider()" disabled>{T('su_btn')}</button>
     <div id="msg"></div>
     <p style="color:#aaa;font-size:11px;text-align:center;margin-top:16px">
-      Minimum 8 caractères.
+      {T('su_min_chars')}
     </p>
   </div>
   <script>
+    var MSG_MISMATCH = "{T('su_mismatch')}";
+    var MSG_SAVING = "{T('su_saving')}";
+    var MSG_EMAIL = "{T('su_check_email')}";
+    var MSG_DONE = "{T('su_done')}";
     function verifier() {{
       const p1 = document.getElementById('pwd1').value;
       const p2 = document.getElementById('pwd2').value;
@@ -2022,7 +2187,7 @@ def setup_done_page(token):
         btn.disabled = false; msg.textContent = '';
       }} else if (p2.length > 0 && p1 !== p2) {{
         btn.disabled = true;
-        msg.textContent = 'Les mots de passe ne correspondent pas.';
+        msg.textContent = MSG_MISMATCH;
         msg.className = 'err';
       }} else {{ btn.disabled = true; }}
     }}
@@ -2030,7 +2195,7 @@ def setup_done_page(token):
       const pwd = document.getElementById('pwd1').value;
       const btn = document.getElementById('btn');
       const msg = document.getElementById('msg');
-      btn.disabled = true; btn.textContent = 'Enregistrement...';
+      btn.disabled = true; btn.textContent = MSG_SAVING;
       const r = await fetch('/setup/{token}/finalize', {{
         method: 'POST',
         headers: {{'Content-Type': 'application/json'}},
@@ -2038,12 +2203,12 @@ def setup_done_page(token):
       }});
       const d = await r.json();
       if (d.success) {{
-        msg.textContent = '✅ Vérifiez votre email !'; msg.className = 'ok';
-        btn.textContent = '✅ Configuration terminée !';
+        msg.textContent = MSG_EMAIL; msg.className = 'ok';
+        btn.textContent = MSG_DONE;
         setTimeout(() => {{ window.location.href = '/setup/{token}/success'; }}, 2000);
       }} else {{
         msg.textContent = '❌ ' + (d.error || 'Erreur'); msg.className = 'err';
-        btn.disabled = false; btn.textContent = '✅ Terminer la configuration';
+        btn.disabled = false; btn.textContent = '{T('su_btn')}';
       }}
     }}
   </script>
@@ -2070,6 +2235,7 @@ def setup_finalize(token):
     gmail      = session.get("gmail", "")
     app_id     = session.get("app_id", "")
     api_key    = session.get("api_key", "")
+    lang       = session.get("lang", "FR")
 
     sauvegarder_setup(token, {
         **session,
@@ -2078,8 +2244,8 @@ def setup_finalize(token):
         "completed_at":     datetime.now().isoformat()
     })
 
-    # Envoyer l'email de confirmation avec le mot de passe SU en clair
-    envoyer_email_confirmation(gmail, club_name, su_password)
+    # Envoyer l'email de confirmation avec le mot de passe SU en clair dans la langue de l'utilisateur
+    envoyer_email_confirmation(gmail, club_name, su_password, lang)
 
     envoyer_notification(
         "✅ Structure créée",
@@ -2098,11 +2264,13 @@ def setup_finalize(token):
 def setup_success(token):
     """Étape 8 : Page finale de succès."""
     session   = charger_setup(token)
-    club_name = session.get("club_name", "Votre structure") if session else "Votre structure"
+    club_name = session.get("club_name", "ManagerPresence") if session else "ManagerPresence"
+    lang      = session.get("lang", "FR") if session else "FR"
+    T = lambda k: web_t(lang, k)
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Espace créé — ManagerPresence</title>
+<title>{T('success_title')} — ManagerPresence</title>
 <style>
   body{{font-family:Arial;background:#F5F5F5;min-height:100vh;
        display:flex;align-items:center;justify-content:center;padding:20px}}
@@ -2112,17 +2280,17 @@ def setup_success(token):
 <body>
   <div class="card">
     <div style="font-size:64px;margin-bottom:16px">✅</div>
-    <h1 style="color:#2E7D32;margin-bottom:12px">Votre espace est prêt !</h1>
+    <h1 style="color:#2E7D32;margin-bottom:12px">{T('success_title')}</h1>
     <p style="color:#555;font-size:16px;margin-bottom:24px">
-      <strong>{club_name}</strong> est opérationnel.
+      <strong>{club_name}</strong> {T('success_body')}
     </p>
     <div style="background:#E8F5E9;border-radius:8px;padding:16px;margin-bottom:20px;
                 font-size:14px;color:#2E7D32;line-height:1.8">
-      📧 Email de confirmation envoyé avec votre mot de passe SU.<br>
-      📱 Ouvrez l'application ManagerPresence.<br>
-      🎉 Votre structure apparaît automatiquement.
+      {T('success_email')}<br>
+      {T('success_open_app')}<br>
+      {T('success_auto')}
     </div>
-    <p style="color:#aaa;font-size:12px">Vous pouvez fermer cette page.</p>
+    <p style="color:#aaa;font-size:12px">{T('success_close')}</p>
   </div>
 </body></html>"""
 
