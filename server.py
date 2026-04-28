@@ -665,6 +665,89 @@ def stripe_webhook():
     
     return jsonify({"received": True})
 
+def get_notif_email(project_id):
+    """Récupère l'email de notification depuis Firestore du projet utilisateur."""
+    try:
+        import firebase_admin
+        from firebase_admin import credentials as fb_creds, firestore as fb_store
+        app_name = f"notif_{project_id}"
+        try:
+            app = firebase_admin.get_app(app_name)
+        except ValueError:
+            cred_dict = json.loads(FIREBASE_CREDENTIALS_JSON)
+            cred = fb_creds.Certificate(cred_dict)
+            app = firebase_admin.initialize_app(cred, {"projectId": project_id}, name=app_name)
+        client = fb_store.client(app)
+        doc = client.collection("config").document("notifications").get()
+        if doc.exists:
+            return doc.to_dict().get("email", "")
+    except Exception as e:
+        print(f"[NOTIF EMAIL] Impossible de récupérer l'email: {e}")
+    return ""
+
+
+def envoyer_rapport_stripe(project_id, sujet, titre, corps_html, montant=None, plan=None):
+    """Envoie un rapport Stripe à l'email de notification via Brevo."""
+    if not BREVO_API_KEY:
+        print(f"[RAPPORT STRIPE] BREVO_API_KEY manquant — {sujet}")
+        return
+
+    email = get_notif_email(project_id)
+    if not email:
+        print(f"[RAPPORT STRIPE] Pas d'email de notification pour {project_id}")
+        return
+
+    try:
+        licence = charger_licence(project_id)
+        nom_structure = licence.get("nomStructure", project_id) if licence else project_id
+
+        montant_html = f"""
+        <div style="background:#E8F5E9;border-radius:8px;padding:12px;text-align:center;margin:16px 0">
+          <span style="font-size:24px;font-weight:bold;color:#2E7D32">{montant}</span>
+        </div>""" if montant else ""
+
+        plan_html = f"""
+        <div style="background:#E3F2FD;border-radius:6px;padding:8px;text-align:center;margin:8px 0">
+          <strong style="color:#1565C0">{plan}</strong>
+        </div>""" if plan else ""
+
+        html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+  <h1 style="color:#1565C0;text-align:center">🏔️ ManagerPresence</h1>
+  <h2 style="text-align:center">{titre}</h2>
+  <p style="color:#555;font-size:14px">Structure : <strong>{nom_structure}</strong></p>
+  {montant_html}
+  {plan_html}
+  <div style="background:#F5F5F5;border-radius:8px;padding:16px;margin:16px 0;font-size:14px;color:#333;line-height:1.6">
+    {corps_html}
+  </div>
+  <p style="color:#aaa;font-size:11px;text-align:center">
+    ManagerPresence — Rapport automatique<br>
+    {datetime.now().strftime('%d/%m/%Y %H:%M')}
+  </p>
+</body></html>"""
+
+        import urllib.request
+        payload = json.dumps({
+            "sender": {"name": "ManagerPresence", "email": "cp.support.dev@gmail.com"},
+            "to": [{"email": email}],
+            "subject": f"[ManagerPresence] {sujet}",
+            "htmlContent": html
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=payload,
+            headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json", "Accept": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+            print(f"[RAPPORT STRIPE] Email envoyé à {email} — id: {result.get('messageId')}")
+    except Exception as e:
+        print(f"[RAPPORT STRIPE] Erreur envoi: {e}")
+
+
 def handle_subscription_created(project_id, subscription_id, customer_id):
     """Gère la création d'un nouvel abonnement"""
     print(f"[STRIPE] Nouvel abonnement pour {project_id}: {subscription_id}")
@@ -696,7 +779,20 @@ def handle_subscription_created(project_id, subscription_id, customer_id):
             licence["message"] = f"Merci ! Votre abonnement {plan_config['nom']} est actif."
             
             sauvegarder_licence(project_id, licence)
-            
+
+            plan_nom = PLANS[nouveau_plan]["nom"]
+            prix = f"{subscription['items']['data'][0]['price']['unit_amount'] / 100:.2f}€"
+            periode = "/ an" if interval == "year" else "/ mois"
+
+            envoyer_rapport_stripe(
+                project_id,
+                sujet=f"✅ Nouvel abonnement {plan_nom}",
+                titre="✅ Votre abonnement est actif !",
+                corps_html=f"Votre abonnement <strong>{plan_nom}</strong> a été activé avec succès.<br>Prochain renouvellement : <strong>{licence.get('dateExpiration', '')[:10]}</strong>",
+                montant=f"{prix} {periode}",
+                plan=plan_nom
+            )
+
             envoyer_notification(
                 "💳 Nouvel abonnement Stripe",
                 f"Nouvel abonnement !\n\nProject ID: {project_id}\nStructure: {licence.get('nomStructure', 'N/A')}\nPlan: {nouveau_plan}\nSubscription: {subscription_id}"
@@ -740,20 +836,44 @@ def handle_subscription_updated(project_id, subscription):
                 licence["message"] = "Abonnement annulé. Il reste actif jusqu'à la fin de la période."
             
             sauvegarder_licence(project_id, licence)
-    
+
+            if status == "active":
+                plan_nom = PLANS[nouveau_plan]["nom"]
+                envoyer_rapport_stripe(
+                    project_id,
+                    sujet=f"🔄 Abonnement modifié — {plan_nom}",
+                    titre="🔄 Votre abonnement a été modifié",
+                    corps_html=f"Votre plan est maintenant <strong>{plan_nom}</strong>.<br>Actif jusqu'au : <strong>{licence.get('dateExpiration', '')[:10]}</strong>",
+                    plan=plan_nom
+                )
+            elif status in ["past_due", "unpaid"]:
+                envoyer_rapport_stripe(
+                    project_id,
+                    sujet="⚠️ Problème de paiement",
+                    titre="⚠️ Problème de paiement détecté",
+                    corps_html="Un problème de paiement a été détecté sur votre abonnement.<br>Veuillez mettre à jour votre moyen de paiement via le portail client."
+                )
+
     except Exception as e:
         print(f"Erreur handle_subscription_updated: {e}")
 
 def handle_subscription_cancelled(project_id):
     """Gère l'annulation d'abonnement"""
     print(f"[STRIPE] Abonnement annulé pour {project_id}")
-    
+
     licence = charger_licence(project_id)
     if licence:
         licence["stripeSubscriptionId"] = None
         licence["message"] = "Votre abonnement a été annulé. Accès jusqu'au " + licence.get("dateExpiration", "")[:10]
         sauvegarder_licence(project_id, licence)
-        
+
+        envoyer_rapport_stripe(
+            project_id,
+            sujet="❌ Abonnement annulé",
+            titre="❌ Votre abonnement a été annulé",
+            corps_html=f"Votre abonnement ManagerPresence a été annulé.<br>Vous conservez l'accès jusqu'au : <strong>{licence.get('dateExpiration', '')[:10]}</strong><br><br>Pour renouveler, ouvrez l'application et allez dans Paramètres → Licence."
+        )
+
         envoyer_notification(
             "❌ Abonnement annulé",
             f"Abonnement annulé !\n\nProject ID: {project_id}\nStructure: {licence.get('nomStructure', 'N/A')}"
@@ -762,7 +882,7 @@ def handle_subscription_cancelled(project_id):
 def handle_payment_succeeded(project_id, subscription):
     """Gère le renouvellement réussi"""
     print(f"[STRIPE] Paiement réussi pour {project_id}")
-    
+
     licence = charger_licence(project_id)
     if licence:
         period_end = subscription.get("current_period_end")
@@ -772,15 +892,38 @@ def handle_payment_succeeded(project_id, subscription):
         licence["message"] = "Merci ! Votre abonnement a été renouvelé."
         sauvegarder_licence(project_id, licence)
 
+        try:
+            montant = subscription["items"]["data"][0]["price"]["unit_amount"] / 100
+            interval = subscription["items"]["data"][0]["price"]["recurring"]["interval"]
+            periode = "/ an" if interval == "year" else "/ mois"
+            prix_str = f"{montant:.2f}€ {periode}"
+        except Exception:
+            prix_str = None
+
+        envoyer_rapport_stripe(
+            project_id,
+            sujet="✅ Paiement réussi — Abonnement renouvelé",
+            titre="✅ Paiement reçu !",
+            corps_html=f"Votre abonnement a été renouvelé avec succès.<br>Prochain renouvellement : <strong>{licence.get('dateExpiration', '')[:10]}</strong>",
+            montant=prix_str
+        )
+
 def handle_payment_failed(project_id, customer_email):
     """Gère un échec de paiement"""
     print(f"[STRIPE] Paiement échoué pour {project_id}")
-    
+
     licence = charger_licence(project_id)
     if licence:
         licence["message"] = "⚠️ Échec du paiement. Mettez à jour votre carte via le portail client."
         sauvegarder_licence(project_id, licence)
-        
+
+        envoyer_rapport_stripe(
+            project_id,
+            sujet="⚠️ Échec de paiement",
+            titre="⚠️ Votre paiement a échoué",
+            corps_html="Le renouvellement automatique de votre abonnement a échoué.<br><br>Pour éviter une interruption de service, <strong>mettez à jour votre moyen de paiement</strong> en allant dans Paramètres → Licence → Gérer mon abonnement."
+        )
+
         envoyer_notification(
             "⚠️ Paiement échoué",
             f"Échec de paiement !\n\nProject ID: {project_id}\nStructure: {licence.get('nomStructure', 'N/A')}\nEmail: {customer_email}"
