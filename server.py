@@ -240,24 +240,30 @@ def nettoyer_codes_expires():
 # ============================================================
 
 def envoyer_notification(sujet, message):
-    """Envoie un email de notification"""
-    if not SMTP_PASSWORD or not SMTP_EMAIL:
+    """Envoie un email de notification au développeur via Brevo."""
+    if not BREVO_API_KEY:
         print(f"[NOTIFICATION] {sujet}: {message}")
         return False
-    
+
     try:
-        msg = MIMEMultipart()
-        msg["From"] = SMTP_EMAIL
-        msg["To"] = NOTIFY_EMAIL
-        msg["Subject"] = f"[ManagerPresence] {sujet}"
-        msg.attach(MIMEText(message, "plain"))
-        
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(SMTP_EMAIL, SMTP_PASSWORD)
-            server.send_message(msg)
+        import urllib.request
+        payload = json.dumps({
+            "sender": {"name": "ManagerPresence Server", "email": "cp.support.dev@gmail.com"},
+            "to": [{"email": "cp.support.dev@gmail.com"}],
+            "subject": f"[ManagerPresence] {sujet}",
+            "textContent": message
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=payload,
+            headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            print(f"[NOTIFICATION] Email envoyé : {sujet}")
         return True
     except Exception as e:
-        print(f"Erreur envoi email: {e}")
+        print(f"[NOTIFICATION] Erreur envoi: {e}")
         return False
 
 # ============================================================
@@ -1293,6 +1299,7 @@ def envoyer_email_setup(gmail, club_name, setup_url, lang="FR"):
             "title": "Votre espace est presque prêt !",
             "body": f"La structure <strong>\"{club_name}\"</strong> a été initialisée.<br>Il ne reste qu'une étape : vous connecter avec votre compte Google.",
             "btn": "Finaliser la création →",
+            "chrome_warn": "⚠️ <strong>Important :</strong> ouvrez ce lien avec <strong>Google Chrome</strong> pour garantir le bon fonctionnement de la redirection vers l'application.",
             "validity": "Ce lien est valable 24 heures.<br>Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.",
             "footer": "ManagerPresence — Données hébergées en France (Firebase europe-west9)"
         },
@@ -1301,6 +1308,7 @@ def envoyer_email_setup(gmail, club_name, setup_url, lang="FR"):
             "title": "Your space is almost ready!",
             "body": f"The structure <strong>\"{club_name}\"</strong> has been initialized.<br>One step left: sign in with your Google account.",
             "btn": "Complete setup →",
+            "chrome_warn": "⚠️ <strong>Important:</strong> open this link with <strong>Google Chrome</strong> to ensure the redirect back to the app works correctly.",
             "validity": "This link is valid for 24 hours.<br>If you did not make this request, please ignore this email.",
             "footer": "ManagerPresence — Data hosted in France (Firebase europe-west9)"
         },
@@ -1309,6 +1317,7 @@ def envoyer_email_setup(gmail, club_name, setup_url, lang="FR"):
             "title": "¡Su espacio está casi listo!",
             "body": f"La estructura <strong>\"{club_name}\"</strong> ha sido inicializada.<br>Solo queda un paso: iniciar sesión con su cuenta de Google.",
             "btn": "Finalizar la creación →",
+            "chrome_warn": "⚠️ <strong>Importante:</strong> abra este enlace con <strong>Google Chrome</strong> para garantizar el correcto funcionamiento de la redirección a la aplicación.",
             "validity": "Este enlace es válido durante 24 horas.<br>Si no realizó esta solicitud, ignore este correo.",
             "footer": "ManagerPresence — Datos alojados en Francia (Firebase europe-west9)"
         },
@@ -1317,6 +1326,7 @@ def envoyer_email_setup(gmail, club_name, setup_url, lang="FR"):
             "title": "Ihr Bereich ist fast fertig!",
             "body": f"Die Einrichtung <strong>\"{club_name}\"</strong> wurde initialisiert.<br>Noch ein Schritt: Melden Sie sich mit Ihrem Google-Konto an.",
             "btn": "Einrichtung abschließen →",
+            "chrome_warn": "⚠️ <strong>Wichtig:</strong> öffnen Sie diesen Link mit <strong>Google Chrome</strong>, um die korrekte Weiterleitung zur App zu gewährleisten.",
             "validity": "Dieser Link ist 24 Stunden gültig.<br>Falls Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail.",
             "footer": "ManagerPresence — Daten in Frankreich gehostet (Firebase europe-west9)"
         },
@@ -1325,6 +1335,7 @@ def envoyer_email_setup(gmail, club_name, setup_url, lang="FR"):
             "title": "Il tuo spazio è quasi pronto!",
             "body": f"La struttura <strong>\"{club_name}\"</strong> è stata inizializzata.<br>Manca solo un passo: accedi con il tuo account Google.",
             "btn": "Completa la creazione →",
+            "chrome_warn": "⚠️ <strong>Importante:</strong> apri questo link con <strong>Google Chrome</strong> per garantire il corretto funzionamento del reindirizzamento all'app.",
             "validity": "Questo link è valido per 24 ore.<br>Se non hai effettuato questa richiesta, ignora questa email.",
             "footer": "ManagerPresence — Dati ospitati in Francia (Firebase europe-west9)"
         },
@@ -1333,6 +1344,7 @@ def envoyer_email_setup(gmail, club_name, setup_url, lang="FR"):
             "title": "O seu espaço está quase pronto!",
             "body": f"A estrutura <strong>\"{club_name}\"</strong> foi inicializada.<br>Falta apenas um passo: iniciar sessão com a sua conta Google.",
             "btn": "Finalizar a criação →",
+            "chrome_warn": "⚠️ <strong>Importante:</strong> abra este link com o <strong>Google Chrome</strong> para garantir o correto funcionamento do redirecionamento para a aplicação.",
             "validity": "Este link é válido por 24 horas.<br>Se não fez este pedido, ignore este email.",
             "footer": "ManagerPresence — Dados alojados em França (Firebase europe-west9)"
         },
@@ -1346,6 +1358,10 @@ def envoyer_email_setup(gmail, club_name, setup_url, lang="FR"):
   <h1 style="color:#1565C0;text-align:center">🏔️ ManagerPresence</h1>
   <h2>{t['title']}</h2>
   <p style="color:#555;font-size:16px">{t['body']}</p>
+  <div style="background:#FFF3E0;border-left:4px solid #FF9800;padding:12px 16px;
+              border-radius:4px;margin:20px 0;font-size:14px;color:#E65100">
+    {t['chrome_warn']}
+  </div>
   <div style="text-align:center;margin:30px 0">
     <a href="{setup_url}"
        style="background:#1565C0;color:white;padding:16px 32px;
@@ -1681,6 +1697,7 @@ def web_t(lang, key):
         "oauth_return_app":      {"FR": "📱 Retournez dans l'application ManagerPresence", "EN": "📱 Return to the ManagerPresence app", "ES": "📱 Regrese a la aplicación ManagerPresence", "DE": "📱 Kehren Sie zur ManagerPresence-App zurück", "IT": "📱 Torna all'app ManagerPresence", "PT": "📱 Regresse à aplicação ManagerPresence"},
         "oauth_return_btn":      {"FR": "📱 Retourner dans l'app →", "EN": "📱 Return to app →", "ES": "📱 Regresar a la app →", "DE": "📱 Zur App zurückkehren →", "IT": "📱 Torna all'app →", "PT": "📱 Regressar à app →"},
         "oauth_if_btn_fails":    {"FR": "Si le bouton ne fonctionne pas, revenez manuellement dans l'app.<br>Elle reprendra automatiquement.", "EN": "If the button doesn't work, return manually to the app.<br>It will resume automatically.", "ES": "Si el botón no funciona, regrese manualmente a la app.<br>Se reanudará automáticamente.", "DE": "Falls der Button nicht funktioniert, kehren Sie manuell zur App zurück.<br>Sie wird automatisch fortgesetzt.", "IT": "Se il pulsante non funziona, torna manualmente all'app.<br>Riprenderà automaticamente.", "PT": "Se o botão não funcionar, regresse manualmente à app.<br>Ela retomará automaticamente."},
+        "oauth_use_chrome":      {"FR": "Pour un meilleur résultat, utilisez Chrome comme navigateur lors de la création de votre structure.", "EN": "For best results, use Chrome as your browser when creating your structure.", "ES": "Para mejores resultados, use Chrome como navegador al crear su estructura.", "DE": "Für beste Ergebnisse verwenden Sie Chrome als Browser bei der Erstellung Ihrer Einrichtung.", "IT": "Per risultati migliori, usa Chrome come browser durante la creazione della struttura.", "PT": "Para melhores resultados, utilize o Chrome como browser ao criar a sua estrutura."},
         # Page progression
         "config_title":          {"FR": "Configuration en cours...", "EN": "Configuration in progress...", "ES": "Configuración en curso...", "DE": "Konfiguration läuft...", "IT": "Configurazione in corso...", "PT": "Configuração em curso..."},
         "config_configuring":    {"FR": "Nous configurons", "EN": "We are configuring", "ES": "Estamos configurando", "DE": "Wir konfigurieren", "IT": "Stiamo configurando", "PT": "Estamos a configurar"},
@@ -1958,12 +1975,25 @@ def setup_oauth_callback():
     <p style="color:#aaa;font-size:11px;margin:8px 0">
       {T('oauth_if_btn_fails')}
     </p>
+    <p style="color:#FF9800;font-size:11px;margin:4px 0;background:rgba(255,152,0,0.1);border-radius:6px;padding:8px">
+      ⚠️ {T('oauth_use_chrome')}
+    </p>
   </div>
 <script>
-  window.onload = function() {{
+  var deepLink = "{deep_link}";
+  var intentLink = "intent://setup/{token}#Intent;scheme=managerpresence;package=com.managerpresence;end";
+
+  function tryDeepLink() {{
+    // Tenter le deep link natif
+    window.location.href = deepLink;
+    // Si après 2s on est encore là, essayer l'intent Android (Chrome)
     setTimeout(function() {{
-      window.location.href = "{deep_link}";
-    }}, 1500);
+      window.location.href = intentLink;
+    }}, 2000);
+  }}
+
+  window.onload = function() {{
+    setTimeout(tryDeepLink, 1500);
   }};
 </script>
 </body>
