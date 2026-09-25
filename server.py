@@ -130,6 +130,20 @@ CODE_TYPES = {
 # Durée de validité des codes PWA (en secondes)
 PWA_CODE_VALIDITY = 600  # 10 minutes
 
+# ── Restrictions appliquées aux clés API d'un nouveau club ───────────────
+# La clé Android n'est utilisable que par l'application signée par nous ;
+# la clé navigateur, que depuis le site de la PWA. Une clé extraite de l'APK
+# devient ainsi inexploitable ailleurs.
+ANDROID_PACKAGE = "com.managerpresence"
+ANDROID_SHA1 = [
+    "C4:9C:EF:7C:53:FA:65:2F:E8:C4:C0:77:AE:B6:84:66:41:B3:45:39",  # clé de release
+    "19:10:45:32:72:1D:C5:4E:86:19:D1:94:A5:98:7C:3C:68:1A:78:3E",  # clé de débogage
+]
+PWA_REFERRERS = [
+    "https://managerpresence.netlify.app/*",
+    "https://*.netlify.app/*",   # adresses temporaires créées à chaque déploiement
+]
+
 # ============================================================
 # UTILITAIRES - STOCKAGE FIREBASE
 # ============================================================
@@ -2487,6 +2501,7 @@ def get_credentials(token):
         "project_id":       session.get("project_id", ""),
         "app_id":           session.get("app_id", ""),
         "api_key":          session.get("api_key", ""),
+        "web_api_key":      session.get("web_api_key", ""),
         "su_password_hash": session.get("su_password_hash", ""),
         "club_name":        session.get("club_name", ""),
     })
@@ -2510,6 +2525,7 @@ def setup_ping(token):
             "project_id":          session.get("project_id", ""),
             "app_id":              session.get("app_id", ""),
             "api_key":             session.get("api_key", ""),
+            "web_api_key":         session.get("web_api_key", ""),
             "su_password_hash":    session.get("su_password_hash", ""),
             "club_name":           session.get("club_name", ""),
             "is_first_connection": session.get("is_first_connection", True),
@@ -2748,6 +2764,32 @@ def _configure_firebase_logic(token, session):
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ App Android: {e}")
 
+        # === ÉTAPE 3b : Créer l'app Web (pour la PWA) ===
+        # Sans elle, le projet n'a qu'une clé Android, que l'app et la PWA
+        # devraient partager. Or une clé Google n'accepte qu'un seul type de
+        # restriction : impossible alors de restreindre l'une sans bloquer
+        # l'autre. Cette app Web fait naître une clé « navigateur » distincte.
+        web_app_id = ""
+        web_api_key = ""
+        try:
+            firebase_svc.projects().webApps().create(
+                parent=f"projects/{project_id}",
+                body={"displayName": f"{club_name} (PWA)"}
+            ).execute()
+            time.sleep(6)
+            web_apps = firebase_svc.projects().webApps().list(
+                parent=f"projects/{project_id}"
+            ).execute()
+            if web_apps.get("apps"):
+                web_app_id = web_apps["apps"][0]["appId"]
+                web_config = firebase_svc.projects().webApps().getConfig(
+                    name=f"projects/{project_id}/webApps/{web_app_id}/config"
+                ).execute()
+                web_api_key = web_config.get("apiKey", "")
+                print(f"[CONFIGURE] ✅ App Web créée: {web_app_id}")
+        except Exception as e:
+            print(f"[CONFIGURE] ⚠️ App Web: {e}")
+
         # === ÉTAPE 4 : Activer l'API Firestore puis créer la base ===
         sauvegarder_setup(token, {**session, "status": "firestore",
             "project_id": project_id, "app_id": app_id})
@@ -2856,12 +2898,70 @@ service cloud.firestore {
             keys_resp = keys_svc.projects().locations().keys().list(
                 parent=f"projects/{project_id}/locations/global"
             ).execute()
-            if keys_resp.get("keys"):
-                key_detail = keys_svc.projects().locations().keys().getKeyString(
-                    name=keys_resp["keys"][0]["name"]
-                ).execute()
-                api_key = key_detail.get("keyString", "")
-                print(f"[CONFIGURE] ✅ API key récupérée")
+            toutes = keys_resp.get("keys", [])
+
+            def _chaine(nom_ressource):
+                return keys_svc.projects().locations().keys().getKeyString(
+                    name=nom_ressource
+                ).execute().get("keyString", "")
+
+            # Firebase nomme ses clés « Android key (auto created…) » et
+            # « Browser key (auto created…) ». On s'appuie sur ces libellés,
+            # et on retombe sur l'ordre de la liste si besoin.
+            def _par_libelle(motif):
+                for k in toutes:
+                    if motif in k.get("displayName", "").lower():
+                        return k
+                return None
+
+            cle_android = _par_libelle("android")
+            cle_web = _par_libelle("browser") or _par_libelle("web")
+
+            if cle_android:
+                api_key = _chaine(cle_android["name"])
+            elif toutes:
+                api_key = _chaine(toutes[0]["name"])
+
+            # La clé navigateur vient normalement de getConfig ; sinon, ici
+            if not web_api_key and cle_web:
+                web_api_key = _chaine(cle_web["name"])
+
+            print(f"[CONFIGURE] ✅ Clés récupérées "
+                  f"(android={'oui' if api_key else 'non'}, "
+                  f"navigateur={'oui' if web_api_key else 'non'})")
+
+            # === Restrictions : chaque clé limitée à son usage ===
+            # On ne restreint que si les DEUX clés existent : restreindre la
+            # clé Android alors que la PWA s'en sert encore la couperait net.
+            if api_key and web_api_key:
+                try:
+                    if cle_android:
+                        keys_svc.projects().locations().keys().patch(
+                            name=cle_android["name"],
+                            updateMask="restrictions",
+                            body={"restrictions": {"androidKeyRestrictions": {
+                                "allowedApplications": [
+                                    {"packageName": ANDROID_PACKAGE, "sha1Fingerprint": empreinte}
+                                    for empreinte in ANDROID_SHA1
+                                ]
+                            }}}
+                        ).execute()
+                        print(f"[CONFIGURE] 🔒 Clé Android restreinte")
+
+                    if cle_web:
+                        keys_svc.projects().locations().keys().patch(
+                            name=cle_web["name"],
+                            updateMask="restrictions",
+                            body={"restrictions": {"browserKeyRestrictions": {
+                                "allowedReferrers": PWA_REFERRERS
+                            }}}
+                        ).execute()
+                        print(f"[CONFIGURE] 🔒 Clé navigateur restreinte")
+                except Exception as e:
+                    # Une restriction ratée ne doit pas faire échouer la création
+                    print(f"[CONFIGURE] ⚠️ Restrictions des clés: {e}")
+            else:
+                print(f"[CONFIGURE] ⚠️ Restrictions ignorées : les deux clés sont nécessaires")
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ API key: {e}")
 
@@ -2877,6 +2977,7 @@ service cloud.firestore {
             "project_id":          project_id,
             "app_id":              app_id,
             "api_key":             api_key,
+            "web_api_key":         web_api_key,
             "is_first_connection": True,
         })
         print(f"[CONFIGURE] 🎉 Terminé ! project_id={project_id}, app_id={app_id}")
