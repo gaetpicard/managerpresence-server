@@ -1916,10 +1916,14 @@ def setup_oauth_callback():
 </body></html>""", 400
 
     session = charger_setup(token)
-    if not session:
+    if not session or int(time.time()) > session.get("expires_at", 0):
         return "<html><body>Session invalide ou expirée.</body></html>", 404
 
-    sauvegarder_setup(token, {**session, "oauth_code": code, "status": "oauth_done"})
+    # Retour de Google en double (page rechargée, 2e autorisation) : une création
+    # tourne déjà ou est finie → ne rien relancer, ne pas écraser son statut
+    deja_lancee = session.get("status") == "complete" or session.get("status") in STATUTS_EN_COURS
+    if not deja_lancee:
+        sauvegarder_setup(token, {**session, "oauth_code": code, "status": "oauth_done"})
     club_name = session.get("club_name", "")
     gmail = session.get("gmail", "")
 
@@ -1950,7 +1954,8 @@ def setup_oauth_callback():
         except Exception as e:
             print(f"[OAUTH] Erreur: {e}")
 
-    threading.Thread(target=echanger_oauth_code, daemon=True).start()
+    if not deja_lancee:
+        threading.Thread(target=echanger_oauth_code, daemon=True).start()
 
     deep_link = f"managerpresence://setup/{token}"
     lang = session.get("lang", "FR") if session else "FR"
@@ -2024,7 +2029,7 @@ def setup_create_firebase(token):
     if not session:
         return jsonify({"error": "Session invalide"}), 404
 
-    if session.get("status") in ("complete"):
+    if session.get("status") == "complete" or session.get("status") in STATUTS_EN_COURS:
         return jsonify({"success": True, "status": session.get("status")})
 
     oauth_code = session.get("oauth_code", "")
@@ -2228,6 +2233,8 @@ var STATUS_PROGRESS = {{
   "creating_app": [2, 45],
   "firestore": [2, 55],
   "api_key": [3, 65],
+  "auth_check": [3, 75],
+  "securing": [3, 85],
   "complete": [4, 100]
 }};
 
@@ -2297,6 +2304,8 @@ def setup_status(token):
         "creating_app":     "Enregistrement de l'application Android...",
         "firestore":        "Activation de Firestore en France (europe-west9)...",
         "api_key":          "Récupération de la clé API...",
+        "auth_check":       "Activation de l'authentification...",
+        "securing":         "Sécurisation de votre base de données...",
         "complete":         "Votre espace est prêt !",
         "error":            session.get("error", "Erreur inconnue")
     }
@@ -2311,7 +2320,7 @@ def setup_status(token):
 def setup_done_page(token):
     """Étape 6 : Page de définition du mot de passe SU."""
     session = charger_setup(token)
-    if not session or session.get("status") not in ("complete"):
+    if not session or session.get("status") != "complete":
         return redirect(f"/setup/{token}")
 
     club_name = session.get("club_name", "")
@@ -2515,8 +2524,7 @@ def setup_ping(token):
         return jsonify({"status": "not_found", "ready": False}), 404
 
     status = session.get("status", "pending")
-    ready = status in ("oauth_done", "creating_project", "configuring", "creating_app",
-                       "firestore", "api_key", "complete")
+    ready = status == "oauth_done" or status == "complete" or status in STATUTS_EN_COURS
     complete = status == "complete"
 
     resp = {"status": status, "ready": ready, "complete": complete}
@@ -2536,46 +2544,73 @@ def setup_ping(token):
 @app.route("/setup/<token>/secure-rules", methods=["POST"])
 def setup_secure_rules(token):
     """
-    Resserre les règles Firestore après la création du premier admin.
-    Passe de 'allow read, write: if true' à 'allow read, write: if request.auth != null'.
-    Utilise le refresh_token stocké pour rafraîchir le token OAuth si nécessaire.
+    Appelé par l'app après la création du premier admin (et à chaque démarrage tant
+    que ce n'est pas confirmé). Les structures récentes sont sécurisées dès la création
+    → réponse immédiate. Pour les anciennes, le travail (jusqu'à ~2 min) tourne en
+    arrière-plan : 202 tant que ce n'est pas fini, 200 une fois sécurisé.
+    Ne resserre jamais les règles si l'authentification ne fonctionne pas.
     """
     session = charger_setup(token)
     if not session:
         return jsonify({"error": "Session invalide"}), 404
-
-    project_id = session.get("project_id", "")
-    if not project_id:
+    if session.get("rules_secured"):
+        return jsonify({"success": True, "message": "Règles sécurisées"})
+    if not session.get("project_id"):
         return jsonify({"error": "project_id manquant"}), 400
 
-    token_data = session.get("token_data", {})
-    refresh_token = token_data.get("refresh_token", "")
-    if not refresh_token:
-        return jsonify({"error": "refresh_token manquant"}), 400
+    def travail():
+        ok, message = _securiser_structure(token, session)
+        print(f"[SECURE-RULES] {'✅' if ok else '⚠️'} {session.get('project_id')}: {message}")
+        if not ok:
+            sess = charger_setup(token) or session
+            sauvegarder_setup(token, {**sess, "securing_error": message})
 
-    try:
-        from google.oauth2.credentials import Credentials
-        from googleapiclient.discovery import build
+    threading.Thread(target=travail, daemon=True).start()
+    return jsonify({"success": False, "status": "en_cours",
+                    "derniere_erreur": session.get("securing_error")}), 202
 
-        creds = Credentials(
-            token=token_data.get("access_token", ""),
-            refresh_token=refresh_token,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=GOOGLE_CLIENT_ID,
-            client_secret=GOOGLE_CLIENT_SECRET,
-            scopes=GOOGLE_SCOPES
-        )
 
-        # Forcer le rafraîchissement du token (il a peut-être expiré depuis la création)
-        try:
-            import google.auth.transport.requests
-            creds.refresh(google.auth.transport.requests.Request())
-            print(f"[SECURE-RULES] 🔑 Token rafraîchi pour {project_id}")
-        except Exception as e:
-            print(f"[SECURE-RULES] ⚠️ Refresh token: {e}")
+@app.route("/admin/securiser/<project_id>", methods=["POST"])
+def admin_securiser(project_id):
+    """
+    Réparation d'une structure existante (règles restées ouvertes, auth jamais activée).
+    curl -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" .../admin/securiser/<project_id>
+    Fonctionne seulement si le serveur détient encore l'autorisation Google de cette création.
+    """
+    if not verifier_admin():
+        return jsonify({"error": "Non autorisé"}), 401
+    docs = list(db.collection("setup_sessions").where("project_id", "==", project_id).limit(1).stream())
+    if not docs:
+        return jsonify({"error": "Aucune session de création pour ce projet"}), 404
+    token, session = docs[0].id, docs[0].to_dict()
+    if session.get("rules_secured"):
+        return jsonify({"success": True, "message": "Déjà sécurisée"})
+    if session.get("securing_error"):
+        derniere = session["securing_error"]
+    else:
+        derniere = None
+    # Travail long (> délai de gunicorn) : en arrière-plan ; rappeler la route pour le résultat
+    def travail():
+        ok, message = _securiser_structure(token, session)
+        print(f"[ADMIN-SECURISER] {'✅' if ok else '⚠️'} {project_id}: {message}")
+        if not ok:
+            sess = charger_setup(token) or session
+            sauvegarder_setup(token, {**sess, "securing_error": message})
+    threading.Thread(target=travail, daemon=True).start()
+    return jsonify({"success": False, "status": "en_cours", "derniere_erreur": derniere}), 202
 
-        # Règles strictes
-        firestore_rules = """rules_version = '2';
+
+
+
+# ============================================================
+# SÉCURITÉ D'UNE STRUCTURE — outils communs (création, resserrage, réparation)
+# ============================================================
+
+# Statuts pendant lesquels une création tourne déjà : ne jamais en relancer une seconde
+STATUTS_EN_COURS = ("creating_project", "configuring", "creating_app", "firestore",
+                    "api_key", "auth_check", "securing")
+
+REGLES_STRICTES = """rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /{document=**} {
@@ -2583,31 +2618,201 @@ service cloud.firestore {
     }
   }
 }"""
-        rules_svc = build("firebaserules", "v1", credentials=creds)
-        ruleset = rules_svc.projects().rulesets().create(
-            name=f"projects/{project_id}",
-            body={"source": {"files": [{"name": "firestore.rules", "content": firestore_rules}]}}
-        ).execute()
-        ruleset_name = ruleset.get("name", "")
-        if ruleset_name:
-            rules_svc.projects().releases().updateRelease(
-                name=f"projects/{project_id}/releases/cloud.firestore",
-                body={"release": {
-                    "name": f"projects/{project_id}/releases/cloud.firestore",
-                    "rulesetName": ruleset_name
-                }}
+
+
+def _creds_depuis_session(session):
+    """Identifiants Google de l'utilisateur (rafraîchis), ou None s'il n'y en a plus."""
+    from google.oauth2.credentials import Credentials
+    import google.auth.transport.requests
+    token_data = session.get("token_data") or {}
+    if not token_data.get("refresh_token") and not token_data.get("access_token"):
+        return None
+    creds = Credentials(
+        token=token_data.get("access_token", ""),
+        refresh_token=token_data.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        scopes=GOOGLE_SCOPES
+    )
+    if token_data.get("refresh_token"):
+        try:
+            creds.refresh(google.auth.transport.requests.Request())
+        except Exception as e:
+            print(f"[SECURITE] ⚠️ Rafraîchissement du jeton Google: {e}")
+    return creds
+
+
+def _entetes_google(creds, project_id):
+    # X-Goog-User-Project : facturer/autoriser l'appel sur le projet de la structure,
+    # pas sur le projet OAuth du serveur (sinon l'API d'authentification peut refuser)
+    return {"Authorization": f"Bearer {creds.token}",
+            "Content-Type": "application/json",
+            "X-Goog-User-Project": project_id}
+
+
+def _attendre_firestore(creds, project_id, max_secondes=90):
+    """Attend que la base Firestore existe vraiment. Lève une exception sinon."""
+    from googleapiclient.discovery import build
+    fs_svc = build("firestore", "v1", credentials=creds)
+    for _ in range(max_secondes // 5):
+        try:
+            fs_svc.projects().databases().get(
+                name=f"projects/{project_id}/databases/(default)"
             ).execute()
-            print(f"[SECURE-RULES] ✅ Règles strictes appliquées pour {project_id}")
-            return jsonify({"success": True, "message": "Règles sécurisées"})
-        else:
-            return jsonify({"error": "ruleset_name vide"}), 500
+            return
+        except Exception:
+            time.sleep(5)
+    raise Exception("La base Firestore n'a pas pu être créée")
 
+
+def _activer_auth(creds, project_id):
+    """
+    Initialise Firebase Authentication puis active les connexions anonyme et e-mail.
+    Sans l'initialisation, le projet n'a AUCUNE configuration d'authentification :
+    toute connexion répond CONFIGURATION_NOT_FOUND (cas des structures mp-* créées avant).
+    """
+    import google.auth.transport.requests
+    # 1. Initialisation (répond une erreur si c'est déjà fait : sans conséquence)
+    try:
+        r = http_requests.post(
+            f"https://identitytoolkit.googleapis.com/v2/projects/{project_id}/identityPlatform:initializeAuth",
+            headers=_entetes_google(creds, project_id), json={}, timeout=30)
+        print(f"[AUTH] initializeAuth {project_id}: {r.status_code} {r.text[:200]}")
     except Exception as e:
-        import traceback
-        print(f"[SECURE-RULES] ❌ Erreur: {traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
+        print(f"[AUTH] ⚠️ initializeAuth: {e}")
+
+    # 2. Activation anonyme + e-mail, avec nouvelles tentatives (propagation des API)
+    corps = {"signIn": {"anonymous": {"enabled": True},
+                        "email": {"enabled": True, "passwordRequired": True}}}
+    masque = "signIn.anonymous.enabled,signIn.email.enabled,signIn.email.passwordRequired"
+    for tentative in range(6):
+        try:
+            if not creds.valid and creds.refresh_token:
+                creds.refresh(google.auth.transport.requests.Request())
+            r = http_requests.patch(
+                f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/config",
+                headers=_entetes_google(creds, project_id), json=corps,
+                params={"updateMask": masque}, timeout=30)
+            if r.status_code == 200:
+                print(f"[AUTH] ✅ Authentification activée sur {project_id}")
+                return True
+            print(f"[AUTH] ⏳ Tentative {tentative+1}/6: {r.status_code} {r.text[:300]}")
+        except Exception as e:
+            print(f"[AUTH] ⏳ Tentative {tentative+1}/6: {e}")
+        time.sleep(10)
+    return False
 
 
+def _auth_anonyme_fonctionne(api_key):
+    """
+    Preuve par l'essai : une connexion anonyme avec la clé de l'app réussit-elle ?
+    On se présente comme l'app Android pour passer la restriction de la clé.
+    """
+    if not api_key:
+        return False
+    entetes = {"X-Android-Package": ANDROID_PACKAGE,
+               "X-Android-Cert": ANDROID_SHA1[0].replace(":", "").upper()}
+    for _ in range(6):
+        try:
+            r = http_requests.post(
+                f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}",
+                headers=entetes, json={"returnSecureToken": True}, timeout=20)
+            if r.status_code == 200:
+                # Supprimer le compte anonyme de test
+                try:
+                    http_requests.post(
+                        f"https://identitytoolkit.googleapis.com/v1/accounts:delete?key={api_key}",
+                        headers=entetes, json={"idToken": r.json().get("idToken", "")}, timeout=20)
+                except Exception:
+                    pass
+                return True
+            print(f"[AUTH] ⏳ Essai de connexion anonyme: {r.status_code} {r.text[:200]}")
+        except Exception as e:
+            print(f"[AUTH] ⏳ Essai de connexion anonyme: {e}")
+        time.sleep(10)
+    return False
+
+
+def _deployer_regles(creds, project_id, source):
+    """Publie des règles Firestore (création de la publication ou mise à jour). True si OK."""
+    from googleapiclient.discovery import build
+    for tentative in range(6):
+        try:
+            rules_svc = build("firebaserules", "v1", credentials=creds)
+            ruleset = rules_svc.projects().rulesets().create(
+                name=f"projects/{project_id}",
+                body={"source": {"files": [{"name": "firestore.rules", "content": source}]}}
+            ).execute()
+            nom_regles = ruleset.get("name", "")
+            nom_publication = f"projects/{project_id}/releases/cloud.firestore"
+            try:
+                rules_svc.projects().releases().create(
+                    name=f"projects/{project_id}",
+                    body={"name": nom_publication, "rulesetName": nom_regles}
+                ).execute()
+            except Exception:
+                # La publication existe déjà → la mettre à jour
+                rules_svc.projects().releases().updateRelease(
+                    name=nom_publication,
+                    body={"release": {"name": nom_publication, "rulesetName": nom_regles}}
+                ).execute()
+            print(f"[REGLES] ✅ Règles publiées sur {project_id} (tentative {tentative+1})")
+            return True
+        except Exception as e:
+            print(f"[REGLES] ⏳ Tentative {tentative+1}/6: {e}")
+            time.sleep(10)
+    return False
+
+
+def _oublier_jeton_google(token, session):
+    """
+    Révoque et efface le jeton Google de l'utilisateur dès qu'il ne sert plus :
+    il donne un accès complet à son compte Google Cloud et n'a rien à faire sur le serveur.
+    """
+    refresh = (session.get("token_data") or {}).get("refresh_token", "")
+    if refresh:
+        try:
+            http_requests.post("https://oauth2.googleapis.com/revoke",
+                               params={"token": refresh}, timeout=15)
+        except Exception as e:
+            print(f"[SECURITE] ⚠️ Révocation du jeton: {e}")
+    sess = charger_setup(token) or session
+    sess.pop("token_data", None)
+    sess.pop("oauth_code", None)
+    sauvegarder_setup(token, sess)
+
+
+def _securiser_structure(token, session):
+    """
+    Met une structure dans l'état sûr : authentification active ET vérifiée, puis
+    règles strictes. Ne resserre JAMAIS les règles si l'authentification ne marche pas
+    (l'app serait bloquée hors de sa propre base). Retourne (ok, message).
+    """
+    if session.get("rules_secured"):
+        return True, "Déjà sécurisée"
+    project_id = session.get("project_id", "")
+    if not project_id:
+        return False, "project_id manquant"
+    creds = _creds_depuis_session(session)
+    if creds is None:
+        return False, "Plus d'autorisation Google pour cette structure : recommencez l'autorisation"
+
+    _activer_auth(creds, project_id)
+    if not _auth_anonyme_fonctionne(session.get("api_key", "")):
+        return False, "L'authentification Firebase ne répond pas : règles laissées telles quelles"
+    if not _deployer_regles(creds, project_id, REGLES_STRICTES):
+        return False, "Publication des règles impossible"
+
+    sess = charger_setup(token) or session
+    sauvegarder_setup(token, {**sess, "rules_secured": True,
+                              "secured_at": datetime.now().isoformat()})
+    _oublier_jeton_google(token, {**sess, "rules_secured": True})
+    return True, "Règles sécurisées"
+
+
+_creations_lancees = set()
+_verrou_creations = threading.Lock()
 
 
 def _configure_firebase_logic(token, session):
@@ -2615,6 +2820,14 @@ def _configure_firebase_logic(token, session):
     Crée le projet Firebase de A à Z sur le compte Google de l'utilisateur.
     Pas de retry loop, pas de serviceusage — addFirebase active les APIs tout seul.
     """
+    # Une seule création par session, même si plusieurs déclencheurs arrivent en même temps
+    # (retour de Google + page /configure) : sinon deux projets sont créés
+    with _verrou_creations:
+        if token in _creations_lancees:
+            print(f"[CONFIGURE] ⏭️ Création déjà lancée pour {token[:8]}…, ignorée")
+            return
+        _creations_lancees.add(token)
+
     club_name = session.get("club_name", "")
     gmail = session.get("gmail", "")
     token_data = session.get("token_data", {})
@@ -2812,82 +3025,27 @@ def _configure_firebase_logic(token, session):
                 databaseId="(default)"
             ).execute()
             print(f"[CONFIGURE] ✅ Firestore créé: {project_id}")
-            time.sleep(5)
         except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Firestore: {e}")
+            print(f"[CONFIGURE] ⚠️ Firestore (peut-être déjà créé): {e}")
+        # Ne pas continuer sur une base inexistante (avant : erreur avalée, structure inutilisable)
+        _attendre_firestore(creds, project_id)
+        print(f"[CONFIGURE] ✅ Base Firestore disponible")
 
-        # === ÉTAPE 4b : Règles de sécurité Firestore ===
-        try:
-            # Activer l'API firebaserules sur le projet utilisateur
-            su_svc = build("serviceusage", "v1", credentials=creds)
-            su_svc.services().enable(
-                name=f"projects/{project_id}/services/firebaserules.googleapis.com"
-            ).execute()
-            print(f"[CONFIGURE] ✅ API Firebase Rules activée")
-            time.sleep(10)  # Laisser l'API se propager (ancien 3s ne suffisait pas)
-        except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Activation API Firebase Rules: {e}")
-
-        # Règles ouvertes pendant le setup initial
-        firestore_rules = """rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
-    }
-  }
-}"""
-        # Retry sur la création/déploiement des règles — l'API peut mettre du temps à devenir dispo
-        rules_deployed = False
-        for rules_attempt in range(6):
+        # === ÉTAPE 4b : Activer les API Règles et Authentification ===
+        su_svc = build("serviceusage", "v1", credentials=creds)
+        for api in ("firebaserules.googleapis.com", "identitytoolkit.googleapis.com"):
             try:
-                rules_svc = build("firebaserules", "v1", credentials=creds)
-                ruleset = rules_svc.projects().rulesets().create(
-                    name=f"projects/{project_id}",
-                    body={"source": {"files": [{"name": "firestore.rules", "content": firestore_rules}]}}
-                ).execute()
-                ruleset_name = ruleset.get("name", "")
-                if ruleset_name:
-                    rules_svc.projects().releases().create(
-                        name=f"projects/{project_id}",
-                        body={"name": f"projects/{project_id}/releases/cloud.firestore", "rulesetName": ruleset_name}
-                    ).execute()
-                    print(f"[CONFIGURE] ✅ Règles Firestore déployées (tentative {rules_attempt+1})")
-                    rules_deployed = True
-                    break
+                su_svc.services().enable(name=f"projects/{project_id}/services/{api}").execute()
+                print(f"[CONFIGURE] ✅ API activée: {api}")
             except Exception as e:
-                print(f"[CONFIGURE] ⏳ Règles Firestore tentative {rules_attempt+1}/6: {e}")
-                time.sleep(10)
-        
-        if not rules_deployed:
-            print(f"[CONFIGURE] ❌ ÉCHEC du déploiement des règles Firestore après 6 tentatives !")
+                print(f"[CONFIGURE] ⚠️ Activation {api}: {e}")
+        time.sleep(10)  # propagation des API
 
-        # === ÉTAPE 4c : Activer Identity Toolkit et configurer auth ===
-        # Headers communs pour les appels auth — token de l'UTILISATEUR sur son projet
-        headers_auth = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
-
-        try:
-            su_svc = build("serviceusage", "v1", credentials=creds)
-            su_svc.services().enable(
-                name=f"projects/{project_id}/services/identitytoolkit.googleapis.com"
-            ).execute()
-            print(f"[CONFIGURE] ✅ API Identity Toolkit activée sur {project_id}")
-            time.sleep(8)
-        except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Activation API Identity Toolkit: {e}")
-
-        # API admin v2 — sur le projet de l'UTILISATEUR (project_id), pas le projet serveur
-        try:
-            auth_url = f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/config"
-            auth_body = {"signIn": {"anonymous": {"enabled": True}, "email": {"enabled": True, "passwordRequired": True}}}
-            auth_resp = http_requests.patch(auth_url, headers=headers_auth, json=auth_body,
-                params={"updateMask": "signIn.anonymous.enabled,signIn.email.enabled,signIn.email.passwordRequired"})
-            if auth_resp.status_code == 200:
-                print(f"[CONFIGURE] ✅ Auth configurée sur {project_id}")
-            else:
-                print(f"[CONFIGURE] ⚠️ Auth v2: {auth_resp.status_code} {auth_resp.text[:300]}")
-        except Exception as e:
-            print(f"[CONFIGURE] ⚠️ Auth v2: {e}")
+        # === ÉTAPE 4c : Authentification (initialisation + anonyme + e-mail) ===
+        sauvegarder_setup(token, {**session, "status": "auth_check",
+            "project_id": project_id, "app_id": app_id})
+        if not _activer_auth(creds, project_id):
+            print(f"[CONFIGURE] ⚠️ Configuration de l'authentification non confirmée — vérification par l'essai plus bas")
 
         # === ÉTAPE 5 : Récupérer l'API key ===
         sauvegarder_setup(token, {**session, "status": "api_key",
@@ -2965,6 +3123,23 @@ service cloud.firestore {
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ API key: {e}")
 
+        # === ÉTAPE 5b : Sécurité — preuve que l'authentification marche, puis règles strictes ===
+        # Plus de « règles ouvertes pendant le setup » : l'app se connecte en anonyme avant
+        # d'écrire, donc les règles strictes sont posées dès la création. Une structure dont
+        # l'authentification ne marche pas n'est PAS livrée (elle serait soit ouverte à tous,
+        # soit inutilisable).
+        sauvegarder_setup(token, {**session, "status": "securing",
+            "project_id": project_id, "app_id": app_id})
+        if not api_key:
+            raise Exception("Clé d'API de l'application introuvable")
+        if not _auth_anonyme_fonctionne(api_key):
+            raise Exception("L'authentification Firebase n'a pas pu être activée sur le projet "
+                            f"{project_id}. Réessayez dans quelques minutes.")
+        print(f"[CONFIGURE] ✅ Connexion anonyme vérifiée")
+        if not _deployer_regles(creds, project_id, REGLES_STRICTES):
+            raise Exception("Les règles de sécurité de la base n'ont pas pu être publiées")
+        print(f"[CONFIGURE] 🔒 Règles strictes en place dès la création")
+
         # === ÉTAPE 6 : Licence trial + finaliser ===
         licence = creer_licence_trial(project_id, club_name)
         sauvegarder_licence(project_id, licence)
@@ -2979,7 +3154,11 @@ service cloud.firestore {
             "api_key":             api_key,
             "web_api_key":         web_api_key,
             "is_first_connection": True,
+            "rules_secured":       True,
+            "secured_at":          datetime.now().isoformat(),
         })
+        # Le jeton Google de l'utilisateur ne sert plus : révoqué et effacé
+        _oublier_jeton_google(token, charger_setup(token) or session)
         print(f"[CONFIGURE] 🎉 Terminé ! project_id={project_id}, app_id={app_id}")
 
         try:
@@ -2994,6 +3173,8 @@ service cloud.firestore {
         import traceback
         print(f"[CONFIGURE] ❌ Erreur: {traceback.format_exc()}")
         sauvegarder_setup(token, {**session, "status": "error", "error": str(e)})
+        with _verrou_creations:
+            _creations_lancees.discard(token)  # une nouvelle tentative reste possible
 
 
 @app.route("/setup/<token>/configure-firebase", methods=["POST"])
@@ -3002,8 +3183,11 @@ def configure_firebase(token):
     session = charger_setup(token)
     if not session:
         return jsonify({"error": "Session invalide"}), 404
-    if session.get("status") in ("complete"):
+    if session.get("status") == "complete":
         return jsonify({"success": True})
+    # Une création tourne déjà (lancée au retour de Google) : ne pas créer un 2e projet
+    if session.get("status") in STATUTS_EN_COURS:
+        return jsonify({"success": True, "status": session.get("status")})
     token_data = session.get("token_data", {})
     if not token_data:
         return jsonify({"error": "Token OAuth manquant"}), 400
