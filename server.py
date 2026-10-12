@@ -2598,6 +2598,7 @@ def admin_setups():
             "error":      d.get("error", ""),
             "project_id": d.get("project_id", ""),
             "rules_secured": d.get("rules_secured", False),
+            "compte":     hashlib.sha256(d.get("gmail", "").lower().encode()).hexdigest()[:8],
             "tos_essai":  d.get("tos_essai", 0),
             "tos_erreur": d.get("tos_erreur", ""),
         })
