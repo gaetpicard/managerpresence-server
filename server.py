@@ -3194,7 +3194,12 @@ def _configure_firebase_logic(token, session):
     except Exception as e:
         import traceback
         print(f"[CONFIGURE] ❌ Erreur: {traceback.format_exc()}")
-        sauvegarder_setup(token, {**session, "status": "error", "error": str(e)})
+        erreur = str(e)
+        if "Terms of Service" in erreur:
+            erreur = ("Ce compte Google n'a jamais utilisé Google Cloud : ouvrez "
+                      "https://console.cloud.google.com avec ce compte, acceptez les conditions "
+                      "d'utilisation, puis recommencez la création.")
+        sauvegarder_setup(token, {**session, "status": "error", "error": erreur})
         with _verrou_creations:
             _creations_lancees.discard(token)  # une nouvelle tentative reste possible
 
