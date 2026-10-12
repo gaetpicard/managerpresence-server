@@ -2229,6 +2229,7 @@ function showError(msg) {{
 
 var STATUS_PROGRESS = {{
   "creating_project": [0, 15],
+  "tos_required": [0, 15],
   "configuring": [1, 30],
   "creating_app": [2, 45],
   "firestore": [2, 55],
@@ -2300,6 +2301,7 @@ def setup_status(token):
         "pending":          "En attente...",
         "oauth_done":       "Authentification Google réussie !",
         "creating_project": "Création de votre projet Google Cloud...",
+        "tos_required":     "Une dernière étape : acceptez les conditions de Google (une seule fois).",
         "configuring":      "Activation de Firebase sur votre projet...",
         "creating_app":     "Enregistrement de l'application Android...",
         "firestore":        "Activation de Firestore en France (europe-west9)...",
@@ -2530,6 +2532,8 @@ def setup_ping(token):
     resp = {"status": status, "ready": ready, "complete": complete}
     if status == "error":
         resp["error"] = session.get("error", "")
+    if status == "tos_required":
+        resp["tos_url"] = session.get("tos_url") or "https://console.cloud.google.com/"
     if complete:
         resp.update({
             "project_id":          session.get("project_id", ""),
@@ -2629,7 +2633,7 @@ def admin_securiser(project_id):
 # ============================================================
 
 # Statuts pendant lesquels une création tourne déjà : ne jamais en relancer une seconde
-STATUTS_EN_COURS = ("creating_project", "configuring", "creating_app", "firestore",
+STATUTS_EN_COURS = ("creating_project", "tos_required", "configuring", "creating_app", "firestore",
                     "api_key", "auth_check", "securing")
 
 REGLES_STRICTES = """rules_version = '2';
@@ -2883,55 +2887,72 @@ def _configure_firebase_logic(token, session):
 
         # === ÉTAPE 1 : Créer le projet Google Cloud ===
         sauvegarder_setup(token, {**session, "status": "creating_project"})
-        suffix = secrets.token_hex(4)
-        safe_name = "".join(c.lower() if c.isalnum() else "-" for c in club_name)[:20].strip("-")
-        project_id = f"mp-{safe_name}-{suffix}"
-        print(f"[CONFIGURE] 🔨 Création projet GCloud: {project_id}")
+        def creer_projet():
+            suffix = secrets.token_hex(4)
+            safe_name = "".join(c.lower() if c.isalnum() else "-" for c in club_name)[:20].strip("-")
+            project_id = f"mp-{safe_name}-{suffix}"
+            print(f"[CONFIGURE] 🔨 Création projet GCloud: {project_id}")
 
-        crm = build("cloudresourcemanager", "v1", credentials=creds)
-        create_op = crm.projects().create(body={
-            "projectId": project_id,
-            "name": (club_name + " Club")[:30] if len(club_name) < 4 else club_name[:30]
-        }).execute()
-        print(f"[CONFIGURE] 📋 Résultat projects.create: {json.dumps(create_op)[:500]}")
+            crm = build("cloudresourcemanager", "v1", credentials=creds)
+            create_op = crm.projects().create(body={
+                "projectId": project_id,
+                "name": (club_name + " Club")[:30] if len(club_name) < 4 else club_name[:30]
+            }).execute()
+            print(f"[CONFIGURE] 📋 Résultat projects.create: {json.dumps(create_op)[:500]}")
 
-        # Poller l'opération de création via operations.get si un nom d'opération est retourné
-        op_name = create_op.get("name", "")
-        if op_name:
-            print(f"[CONFIGURE] ⏳ Polling operation: {op_name}")
-            for i in range(30):
-                time.sleep(3)
-                try:
-                    op_result = crm.operations().get(name=op_name).execute()
-                    print(f"[CONFIGURE] ⏳ Operation status (tentative {i+1}): done={op_result.get('done')}")
-                    if op_result.get("done"):
-                        if "error" in op_result:
-                            error_info = op_result["error"]
-                            raise Exception(f"projects.create échoué: code={error_info.get('code')} message={error_info.get('message')}")
-                        print(f"[CONFIGURE] ✅ Projet GCloud créé avec succès: {project_id}")
-                        break
-                except Exception as e:
-                    if "projects.create échoué" in str(e):
-                        raise
-                    print(f"[CONFIGURE] ⏳ Operation polling erreur: {e}")
+            # Poller l'opération de création via operations.get si un nom d'opération est retourné
+            op_name = create_op.get("name", "")
+            if op_name:
+                print(f"[CONFIGURE] ⏳ Polling operation: {op_name}")
+                for i in range(30):
+                    time.sleep(3)
+                    try:
+                        op_result = crm.operations().get(name=op_name).execute()
+                        print(f"[CONFIGURE] ⏳ Operation status (tentative {i+1}): done={op_result.get('done')}")
+                        if op_result.get("done"):
+                            if "error" in op_result:
+                                error_info = op_result["error"]
+                                raise Exception(f"projects.create échoué: code={error_info.get('code')} message={error_info.get('message')}")
+                            print(f"[CONFIGURE] ✅ Projet GCloud créé avec succès: {project_id}")
+                            break
+                    except Exception as e:
+                        if "projects.create échoué" in str(e):
+                            raise
+                        print(f"[CONFIGURE] ⏳ Operation polling erreur: {e}")
+                else:
+                    print(f"[CONFIGURE] ⚠️ Operation pas terminée après 90s")
             else:
-                print(f"[CONFIGURE] ⚠️ Operation pas terminée après 90s")
-        else:
-            # Pas d'operation name — fallback sur projects.get
-            print(f"[CONFIGURE] ⏳ Pas d'operation name, fallback projects.get polling...")
-            for i in range(30):
-                time.sleep(3)
-                try:
-                    project_info = crm.projects().get(projectId=project_id).execute()
-                    lifecycle = project_info.get("lifecycleState", "")
-                    print(f"[CONFIGURE] ⏳ projects.get tentative {i+1}: lifecycle={lifecycle}")
-                    if lifecycle == "ACTIVE":
-                        print(f"[CONFIGURE] ✅ Projet GCloud actif: {project_id}")
-                        break
-                except Exception as e:
-                    print(f"[CONFIGURE] ⏳ projects.get tentative {i+1} erreur: {e}")
-            else:
-                print(f"[CONFIGURE] ⚠️ Projet pas accessible après 90s")
+                # Pas d'operation name — fallback sur projects.get
+                print(f"[CONFIGURE] ⏳ Pas d'operation name, fallback projects.get polling...")
+                for i in range(30):
+                    time.sleep(3)
+                    try:
+                        project_info = crm.projects().get(projectId=project_id).execute()
+                        lifecycle = project_info.get("lifecycleState", "")
+                        print(f"[CONFIGURE] ⏳ projects.get tentative {i+1}: lifecycle={lifecycle}")
+                        if lifecycle == "ACTIVE":
+                            print(f"[CONFIGURE] ✅ Projet GCloud actif: {project_id}")
+                            break
+                    except Exception as e:
+                        print(f"[CONFIGURE] ⏳ projects.get tentative {i+1} erreur: {e}")
+                else:
+                    print(f"[CONFIGURE] ⚠️ Projet pas accessible après 90s")
+            return project_id
+
+        # Compte Google tout neuf : Google exige qu'il accepte une fois ses conditions
+        # d'utilisation. On attend (l'app guide l'utilisateur) puis on réessaie seul.
+        debut_attente = time.time()
+        while True:
+            try:
+                project_id = creer_projet()
+                break
+            except Exception as e:
+                if "Terms of Service" not in str(e) or time.time() - debut_attente > 20 * 60:
+                    raise
+                if (charger_setup(token) or {}).get("status") != "tos_required":
+                    print(f"[CONFIGURE] 📜 Conditions Google Cloud à accepter, attente…")
+                    sauvegarder_setup(token, {**session, "status": "tos_required"})
+                time.sleep(15)
         
         # Pause pour la propagation IAM
         time.sleep(5)
@@ -2952,35 +2973,53 @@ def _configure_firebase_logic(token, session):
         except Exception as e:
             print(f"[CONFIGURE] ⚠️ availableProjects check: {e}")
         
-        # addFirebase retourne une Operation — on la poll jusqu'à done=true
-        print(f"[CONFIGURE] 🔥 Appel addFirebase pour {project_id}...")
-        add_op = firebase_svc.projects().addFirebase(
-            project=f"projects/{project_id}", body={}
-        ).execute()
-        print(f"[CONFIGURE] ✅ addFirebase accepté, operation: {add_op.get('name', 'N/A')}")
+        def activer_firebase():
+            # addFirebase retourne une Operation — on la poll jusqu'à done=true
+            print(f"[CONFIGURE] 🔥 Appel addFirebase pour {project_id}...")
+            add_op = firebase_svc.projects().addFirebase(
+                project=f"projects/{project_id}", body={}
+            ).execute()
+            print(f"[CONFIGURE] ✅ addFirebase accepté, operation: {add_op.get('name', 'N/A')}")
         
-        op_name = add_op.get("name", "")
-        if op_name:
-            # Poller l'opération addFirebase
-            for i in range(30):  # max 60 secondes
-                time.sleep(2)
-                try:
-                    op_status = firebase_svc.operations().get(name=op_name).execute()
-                    if op_status.get("done"):
-                        if "error" in op_status:
-                            raise Exception(f"addFirebase échoué: {op_status['error']}")
-                        print(f"[CONFIGURE] ✅ Firebase activé: {project_id} (après {(i+1)*2}s)")
-                        break
-                except Exception as e:
-                    if "done" in str(e) or i > 20:
-                        raise
-                    pass
+            op_name = add_op.get("name", "")
+            if op_name:
+                # Poller l'opération addFirebase
+                for i in range(30):  # max 60 secondes
+                    time.sleep(2)
+                    try:
+                        op_status = firebase_svc.operations().get(name=op_name).execute()
+                        if op_status.get("done"):
+                            if "error" in op_status:
+                                raise Exception(f"addFirebase échoué: {op_status['error']}")
+                            print(f"[CONFIGURE] ✅ Firebase activé: {project_id} (après {(i+1)*2}s)")
+                            break
+                    except Exception as e:
+                        if "addFirebase échoué" in str(e) or i > 20:
+                            raise
+                        pass
+                else:
+                    print(f"[CONFIGURE] ⚠️ addFirebase operation pas terminée après 60s")
             else:
-                print(f"[CONFIGURE] ⚠️ addFirebase operation pas terminée après 60s")
-        else:
-            # Pas d'operation name, on attend un délai fixe
-            print(f"[CONFIGURE] ✅ Firebase activé (sync): {project_id}")
-            time.sleep(10)
+                # Pas d'operation name, on attend un délai fixe
+                print(f"[CONFIGURE] ✅ Firebase activé (sync): {project_id}")
+                time.sleep(10)
+
+        # Même attente si Google réclame l'acceptation des conditions Firebase
+        debut_attente = time.time()
+        while True:
+            try:
+                activer_firebase()
+                break
+            except Exception as e:
+                if "Terms of Service" not in str(e) or time.time() - debut_attente > 20 * 60:
+                    raise
+                if (charger_setup(token) or {}).get("status") != "tos_required":
+                    print(f"[CONFIGURE] 📜 Conditions Firebase à accepter, attente…")
+                    sauvegarder_setup(token, {**session, "status": "tos_required",
+                                              "tos_url": "https://console.firebase.google.com/",
+                                              "project_id": project_id})
+                time.sleep(15)
+        sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
 
         # === ÉTAPE 3 : Créer l'app Android ===
         sauvegarder_setup(token, {**session, "status": "creating_app", "project_id": project_id})
@@ -3196,9 +3235,8 @@ def _configure_firebase_logic(token, session):
         print(f"[CONFIGURE] ❌ Erreur: {traceback.format_exc()}")
         erreur = str(e)
         if "Terms of Service" in erreur:
-            erreur = ("Ce compte Google n'a jamais utilisé Google Cloud : ouvrez "
-                      "https://console.cloud.google.com avec ce compte, acceptez les conditions "
-                      "d'utilisation, puis recommencez la création.")
+            erreur = ("Les conditions de Google n'ont pas été acceptées à temps. "
+                      "Recommencez la création et touchez « Accepter les conditions Google ».")
         sauvegarder_setup(token, {**session, "status": "error", "error": erreur})
         with _verrou_creations:
             _creations_lancees.discard(token)  # une nouvelle tentative reste possible
