@@ -2540,7 +2540,7 @@ def setup_ping(token):
                 print(f"[CONFIGURE] 🔁 Relance de la création en attente {token[:8]}…")
                 threading.Thread(target=_configure_firebase_logic,
                                  args=(token, session), daemon=True).start()
-        resp["tos_url"] = session.get("tos_url") or "https://console.cloud.google.com/terms/universal"
+        resp["tos_url"] = session.get("tos_url") or "https://console.cloud.google.com/"
     if complete:
         resp.update({
             "project_id":          session.get("project_id", ""),
@@ -3021,7 +3021,15 @@ def _configure_firebase_logic(token, session):
                 activer_firebase()
                 break
             except Exception as e:
-                if "Terms of Service" not in str(e) or time.time() - debut_attente > 20 * 60:
+                attente = time.time() - debut_attente
+                droits = "does not have permission" in str(e) or "PERMISSION_DENIED" in str(e)
+                # Projet tout neuf : Google met parfois quelques minutes à donner les droits
+                if droits and attente < 3 * 60:
+                    print(f"[CONFIGURE] ⏳ Droits pas encore propagés, nouvel essai…")
+                    time.sleep(15)
+                    continue
+                # Au-delà, c'est l'accord Firebase qui manque : l'app guide l'utilisateur
+                if not (droits or "Terms of Service" in str(e)) or attente > 20 * 60:
                     raise
                 print(f"[CONFIGURE] 📜 Conditions Firebase à accepter, attente…")
                 sauvegarder_setup(token, {**session, "status": "tos_required",
