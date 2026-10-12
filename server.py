@@ -2533,6 +2533,13 @@ def setup_ping(token):
     if status == "error":
         resp["error"] = session.get("error", "")
     if status == "tos_required":
+        if time.time() - session.get("tos_essai", 0) > 90 and session.get("token_data"):
+            with _verrou_creations:
+                en_cours = token in _creations_lancees
+            if not en_cours:
+                print(f"[CONFIGURE] 🔁 Relance de la création en attente {token[:8]}…")
+                threading.Thread(target=_configure_firebase_logic,
+                                 args=(token, session), daemon=True).start()
         resp["tos_url"] = session.get("tos_url") or "https://console.cloud.google.com/terms/universal"
     if complete:
         resp.update({
@@ -2591,6 +2598,8 @@ def admin_setups():
             "error":      d.get("error", ""),
             "project_id": d.get("project_id", ""),
             "rules_secured": d.get("rules_secured", False),
+            "tos_essai":  d.get("tos_essai", 0),
+            "tos_erreur": d.get("tos_erreur", ""),
         })
     sessions.sort(key=lambda x: x["created_at"], reverse=True)
     return jsonify(sessions[:10])
@@ -2949,9 +2958,9 @@ def _configure_firebase_logic(token, session):
             except Exception as e:
                 if "Terms of Service" not in str(e) or time.time() - debut_attente > 20 * 60:
                     raise
-                if (charger_setup(token) or {}).get("status") != "tos_required":
-                    print(f"[CONFIGURE] 📜 Conditions Google Cloud à accepter, attente…")
-                    sauvegarder_setup(token, {**session, "status": "tos_required"})
+                print(f"[CONFIGURE] 📜 Conditions Google Cloud à accepter, attente…")
+                sauvegarder_setup(token, {**session, "status": "tos_required",
+                                          "tos_essai": time.time(), "tos_erreur": str(e)[:300]})
                 time.sleep(15)
         
         # Pause pour la propagation IAM
@@ -3013,11 +3022,11 @@ def _configure_firebase_logic(token, session):
             except Exception as e:
                 if "Terms of Service" not in str(e) or time.time() - debut_attente > 20 * 60:
                     raise
-                if (charger_setup(token) or {}).get("status") != "tos_required":
-                    print(f"[CONFIGURE] 📜 Conditions Firebase à accepter, attente…")
-                    sauvegarder_setup(token, {**session, "status": "tos_required",
-                                              "tos_url": "https://console.firebase.google.com/",
-                                              "project_id": project_id})
+                print(f"[CONFIGURE] 📜 Conditions Firebase à accepter, attente…")
+                sauvegarder_setup(token, {**session, "status": "tos_required",
+                                          "tos_url": "https://console.firebase.google.com/",
+                                          "project_id": project_id,
+                                          "tos_essai": time.time(), "tos_erreur": str(e)[:300]})
                 time.sleep(15)
         sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
 
