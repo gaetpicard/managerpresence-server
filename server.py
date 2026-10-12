@@ -2528,6 +2528,8 @@ def setup_ping(token):
     complete = status == "complete"
 
     resp = {"status": status, "ready": ready, "complete": complete}
+    if status == "error":
+        resp["error"] = session.get("error", "")
     if complete:
         resp.update({
             "project_id":          session.get("project_id", ""),
@@ -2568,6 +2570,26 @@ def setup_secure_rules(token):
     threading.Thread(target=travail, daemon=True).start()
     return jsonify({"success": False, "status": "en_cours",
                     "derniere_erreur": session.get("securing_error")}), 202
+
+
+@app.route("/admin/setups", methods=["GET"])
+def admin_setups():
+    """Dernières créations de structure (statut + erreur), sans aucun jeton."""
+    if not verifier_admin():
+        return jsonify({"error": "Non autorisé"}), 401
+    sessions = []
+    for doc in db.collection("setup_sessions").stream():
+        d = doc.to_dict() or {}
+        sessions.append({
+            "created_at": d.get("created_at", ""),
+            "club_name":  d.get("club_name", ""),
+            "status":     d.get("status", ""),
+            "error":      d.get("error", ""),
+            "project_id": d.get("project_id", ""),
+            "rules_secured": d.get("rules_secured", False),
+        })
+    sessions.sort(key=lambda x: x["created_at"], reverse=True)
+    return jsonify(sessions[:10])
 
 
 @app.route("/admin/securiser/<project_id>", methods=["POST"])
