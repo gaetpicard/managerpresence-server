@@ -2533,7 +2533,7 @@ def setup_ping(token):
     if status == "error":
         resp["error"] = session.get("error", "")
     if status == "tos_required":
-        resp["tos_url"] = session.get("tos_url") or "https://console.cloud.google.com/"
+        resp["tos_url"] = session.get("tos_url") or "https://console.cloud.google.com/terms/universal"
     if complete:
         resp.update({
             "project_id":          session.get("project_id", ""),
