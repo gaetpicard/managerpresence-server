@@ -23,6 +23,8 @@ import hashlib
 import urllib.parse
 import time
 import requests as http_requests
+import unicodedata
+import re
 
 app = Flask(__name__)
 CORS(app)
@@ -2899,14 +2901,18 @@ def _configure_firebase_logic(token, session):
         sauvegarder_setup(token, {**session, "status": "creating_project"})
         def creer_projet():
             suffix = secrets.token_hex(4)
-            safe_name = "".join(c.lower() if c.isalnum() else "-" for c in club_name)[:20].strip("-")
+            # Google n'accepte que l'ASCII : « maître » → « maitre »
+            ascii_name = unicodedata.normalize("NFKD", club_name).encode("ascii", "ignore").decode("ascii")
+            safe_name = re.sub(r"-+", "-", "".join(c.lower() if c.isalnum() else "-" for c in ascii_name)).strip("-")[:20].strip("-") or "club"
             project_id = f"mp-{safe_name}-{suffix}"
+            nom_affiche = re.sub(r"[^A-Za-z0-9 '\"!-]", "", ascii_name).strip()
+            nom_affiche = (nom_affiche if len(nom_affiche) >= 4 else (nom_affiche + " Club").strip())[:30]
             print(f"[CONFIGURE] 🔨 Création projet GCloud: {project_id}")
 
             crm = build("cloudresourcemanager", "v1", credentials=creds)
             create_op = crm.projects().create(body={
                 "projectId": project_id,
-                "name": (club_name + " Club")[:30] if len(club_name) < 4 else club_name[:30]
+                "name": nom_affiche
             }).execute()
             print(f"[CONFIGURE] 📋 Résultat projects.create: {json.dumps(create_op)[:500]}")
 
