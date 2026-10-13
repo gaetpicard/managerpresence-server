@@ -3304,6 +3304,40 @@ def configure_firebase(token):
     return jsonify({"success": True, "status": "configuring"})
 
 
+@app.route("/setup/<token>/retry", methods=["POST"])
+def setup_retry(token):
+    """
+    Bouton « Réessayer » de l'app après une erreur : relance la création là où elle
+    s'est arrêtée (le projet déjà créé est réutilisé), sans redemander Gmail ni Google.
+    """
+    session = charger_setup(token)
+    if not session:
+        return jsonify({"error": "Session expirée : recommencez la création."}), 404
+    status = session.get("status")
+    if status == "complete" or status in STATUTS_EN_COURS:
+        return jsonify({"success": True, "status": status})
+    if not session.get("token_data"):
+        return jsonify({"error": "L'autorisation Google n'est plus valable : recommencez la création."}), 409
+    session.pop("error", None)
+    session["status"] = "oauth_done"
+    sauvegarder_setup(token, session)
+    threading.Thread(target=_configure_firebase_logic, args=(token, session), daemon=True).start()
+    return jsonify({"success": True, "status": "oauth_done"})
+
+
+@app.route("/setup/<token>/cancel", methods=["POST"])
+def setup_cancel(token):
+    """Bouton « Abandonner » : rend l'autorisation Google et efface la session."""
+    session = charger_setup(token)
+    if not session:
+        return jsonify({"success": True})
+    if session.get("status") in STATUTS_EN_COURS:
+        return jsonify({"error": "Création en cours : patientez quelques instants."}), 409
+    _oublier_jeton_google(token, session)
+    supprimer_setup(token)
+    return jsonify({"success": True})
+
+
 @app.route("/resend-setup-email", methods=["POST"])
 def resend_setup_email():
     """Renvoie l'email de setup si l'utilisateur ne l'a pas reçu."""
