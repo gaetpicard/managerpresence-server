@@ -2911,6 +2911,11 @@ def _configure_firebase_logic(token, session):
         # === ÉTAPE 1 : Créer le projet Google Cloud ===
         sauvegarder_setup(token, {**session, "status": "creating_project"})
         def creer_projet():
+            # « Réessayer » : reprendre le projet déjà commencé par CETTE création
+            deja = (charger_setup(token) or {}).get("project_id") or session.get("project_id")
+            if deja:
+                print(f"[CONFIGURE] ♻️ Reprise du projet de cette création : {deja}")
+                return deja
             suffix = secrets.token_hex(4)
             # Google n'accepte que l'ASCII : « maître » → « maitre »
             ascii_name = unicodedata.normalize("NFKD", club_name).encode("ascii", "ignore").decode("ascii")
@@ -3012,9 +3017,16 @@ def _configure_firebase_logic(token, session):
         def activer_firebase():
             # addFirebase retourne une Operation — on la poll jusqu'à done=true
             print(f"[CONFIGURE] 🔥 Appel addFirebase pour {project_id}...")
-            add_op = firebase_svc.projects().addFirebase(
-                project=f"projects/{project_id}", body={}
-            ).execute()
+            try:
+                add_op = firebase_svc.projects().addFirebase(
+                    project=f"projects/{project_id}", body={}
+                ).execute()
+            except Exception as e:
+                # Projet repris : Firebase y est déjà
+                if "409" in str(e) or "ALREADY_EXISTS" in str(e):
+                    print(f"[CONFIGURE] ✅ Firebase déjà présent sur {project_id}")
+                    return
+                raise
             print(f"[CONFIGURE] ✅ addFirebase accepté, operation: {add_op.get('name', 'N/A')}")
         
             op_name = add_op.get("name", "")
