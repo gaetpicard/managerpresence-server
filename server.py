@@ -2604,6 +2604,7 @@ def admin_setups():
             "tos_essai":  d.get("tos_essai", 0),
             "tos_erreur": d.get("tos_erreur", ""),
             "diag":       d.get("diag", ""),
+            "diag_auth":  d.get("diag_auth", []),
         })
     sessions.sort(key=lambda x: x["created_at"], reverse=True)
     return jsonify(sessions[:request.args.get("n", 10, type=int)])
@@ -2705,6 +2706,15 @@ def _attendre_firestore(creds, project_id, max_secondes=90):
     raise Exception("La base Firestore n'a pas pu être créée")
 
 
+_diag_auth = {}  # project_id -> dernières réponses de Google (diagnostic)
+
+
+def _noter_auth(project_id, message):
+    print(f"[AUTH] {project_id}: {message}")
+    _diag_auth.setdefault(project_id, []).append(message[:300])
+    _diag_auth[project_id] = _diag_auth[project_id][-8:]
+
+
 def _activer_auth(creds, project_id):
     """
     Initialise Firebase Authentication puis active les connexions anonyme et e-mail.
@@ -2717,7 +2727,7 @@ def _activer_auth(creds, project_id):
         r = http_requests.post(
             f"https://identitytoolkit.googleapis.com/v2/projects/{project_id}/identityPlatform:initializeAuth",
             headers=_entetes_google(creds, project_id), json={}, timeout=30)
-        print(f"[AUTH] initializeAuth {project_id}: {r.status_code} {r.text[:200]}")
+        _noter_auth(project_id, f"initializeAuth {r.status_code} {r.text[:200]}")
     except Exception as e:
         print(f"[AUTH] ⚠️ initializeAuth: {e}")
 
@@ -2736,14 +2746,14 @@ def _activer_auth(creds, project_id):
             if r.status_code == 200:
                 print(f"[AUTH] ✅ Authentification activée sur {project_id}")
                 return True
-            print(f"[AUTH] ⏳ Tentative {tentative+1}/6: {r.status_code} {r.text[:300]}")
+            _noter_auth(project_id, f"config {r.status_code} {r.text[:200]}")
         except Exception as e:
             print(f"[AUTH] ⏳ Tentative {tentative+1}/6: {e}")
         time.sleep(10)
     return False
 
 
-def _auth_anonyme_fonctionne(api_key):
+def _auth_anonyme_fonctionne(api_key, project_id=""):
     """
     Preuve par l'essai : une connexion anonyme avec la clé de l'app réussit-elle ?
     On se présente comme l'app Android pour passer la restriction de la clé.
@@ -2766,7 +2776,7 @@ def _auth_anonyme_fonctionne(api_key):
                 except Exception:
                     pass
                 return True
-            print(f"[AUTH] ⏳ Essai de connexion anonyme: {r.status_code} {r.text[:200]}")
+            _noter_auth(project_id, f"signUp {r.status_code} {r.text[:200]}")
         except Exception as e:
             print(f"[AUTH] ⏳ Essai de connexion anonyme: {e}")
         time.sleep(10)
@@ -2838,7 +2848,7 @@ def _securiser_structure(token, session):
         return False, "Plus d'autorisation Google pour cette structure : recommencez l'autorisation"
 
     _activer_auth(creds, project_id)
-    if not _auth_anonyme_fonctionne(session.get("api_key", "")):
+    if not _auth_anonyme_fonctionne(session.get("api_key", ""), project_id):
         return False, "L'authentification Firebase ne répond pas : règles laissées telles quelles"
     if not _deployer_regles(creds, project_id, REGLES_STRICTES):
         return False, "Publication des règles impossible"
@@ -3236,7 +3246,9 @@ def _configure_firebase_logic(token, session):
             "project_id": project_id, "app_id": app_id})
         if not api_key:
             raise Exception("Clé d'API de l'application introuvable")
-        if not _auth_anonyme_fonctionne(api_key):
+        if not _auth_anonyme_fonctionne(api_key, project_id):
+            sauvegarder_setup(token, {**session, "status": "securing", "project_id": project_id,
+                                      "diag_auth": _diag_auth.get(project_id, [])})
             raise Exception("L'authentification Firebase n'a pas pu être activée sur le projet "
                             f"{project_id}. Réessayez dans quelques minutes.")
         print(f"[CONFIGURE] ✅ Connexion anonyme vérifiée")
