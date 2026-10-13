@@ -3252,21 +3252,32 @@ def _configure_firebase_logic(token, session):
         # === ÉTAPE 5b : Sécurité — preuve que l'authentification marche, puis règles strictes ===
         # Plus de « règles ouvertes pendant le setup » : l'app se connecte en anonyme avant
         # d'écrire, donc les règles strictes sont posées dès la création. Une structure dont
-        # l'authentification ne marche pas n'est PAS livrée (elle serait soit ouverte à tous,
-        # soit inutilisable).
+        # l'authentification ne répond pas encore est livrée avec une base ouverte temporaire,
+        # sécurisée ensuite (voir plus bas).
         sauvegarder_setup(token, {**session, "status": "securing",
             "project_id": project_id, "app_id": app_id})
         if not api_key:
             raise Exception("Clé d'API de l'application introuvable")
-        if not _auth_anonyme_fonctionne(api_key, project_id):
-            sauvegarder_setup(token, {**session, "status": "securing", "project_id": project_id,
-                                      "diag_auth": _diag_auth.get(project_id, [])})
-            raise Exception("L'authentification Firebase n'a pas pu être activée sur le projet "
-                            f"{project_id}. Réessayez dans quelques minutes.")
-        print(f"[CONFIGURE] ✅ Connexion anonyme vérifiée")
-        if not _deployer_regles(creds, project_id, REGLES_STRICTES):
-            raise Exception("Les règles de sécurité de la base n'ont pas pu être publiées")
-        print(f"[CONFIGURE] 🔒 Règles strictes en place dès la création")
+        securisee = _auth_anonyme_fonctionne(api_key, project_id)
+        if securisee:
+            print(f"[CONFIGURE] ✅ Connexion anonyme vérifiée")
+            if not _deployer_regles(creds, project_id, REGLES_STRICTES):
+                raise Exception("Les règles de sécurité de la base n'ont pas pu être publiées")
+            print(f"[CONFIGURE] 🔒 Règles strictes en place dès la création")
+        else:
+            # Choix du propriétaire (13/10/2026) : livrer la structure, sécuriser ensuite.
+            # Base ouverte TEMPORAIREMENT (expire seule après 30 jours) ; l'app rappelle
+            # /secure-rules à chaque démarrage et les règles strictes sont posées dès que
+            # l'authentification répond. Le jeton Google est gardé pour ça.
+            fin = datetime.now() + timedelta(days=30)
+            regles_temporaires = (
+                "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n"
+                f"    match /{{document=**}} {{\n      allow read, write: if request.time < timestamp.date({fin.year}, {fin.month}, {fin.day});\n"
+                "    }\n  }\n}\n")
+            if not _deployer_regles(creds, project_id, regles_temporaires):
+                raise Exception("Les règles de la base n'ont pas pu être publiées")
+            print(f"[CONFIGURE] ⚠️ Auth pas encore prête : base ouverte jusqu'au {fin.date()}, "
+                  f"sécurisation au prochain démarrage de l'app")
 
         # === ÉTAPE 6 : Licence trial + finaliser ===
         licence = creer_licence_trial(project_id, club_name)
@@ -3282,11 +3293,14 @@ def _configure_firebase_logic(token, session):
             "api_key":             api_key,
             "web_api_key":         web_api_key,
             "is_first_connection": True,
-            "rules_secured":       True,
-            "secured_at":          datetime.now().isoformat(),
+            "rules_secured":       securisee,
+            "secured_at":          datetime.now().isoformat() if securisee else "",
+            "diag_auth":           _diag_auth.get(project_id, []),
         })
-        # Le jeton Google de l'utilisateur ne sert plus : révoqué et effacé
-        _oublier_jeton_google(token, charger_setup(token) or session)
+        # Le jeton Google ne sert plus une fois la base sécurisée : révoqué et effacé
+        # (sinon gardé jusqu'à la sécurisation, cf. _securiser_structure)
+        if securisee:
+            _oublier_jeton_google(token, charger_setup(token) or session)
         print(f"[CONFIGURE] 🎉 Terminé ! project_id={project_id}, app_id={app_id}")
 
         try:
