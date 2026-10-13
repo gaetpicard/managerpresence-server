@@ -2606,7 +2606,7 @@ def admin_setups():
             "diag":       d.get("diag", ""),
         })
     sessions.sort(key=lambda x: x["created_at"], reverse=True)
-    return jsonify(sessions[:10])
+    return jsonify(sessions[:request.args.get("n", 10, type=int)])
 
 
 @app.route("/admin/securiser/<project_id>", methods=["POST"])
