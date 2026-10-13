@@ -2603,6 +2603,7 @@ def admin_setups():
             "compte":     hashlib.sha256(d.get("gmail", "").lower().encode()).hexdigest()[:8],
             "tos_essai":  d.get("tos_essai", 0),
             "tos_erreur": d.get("tos_erreur", ""),
+            "diag":       d.get("diag", ""),
         })
     sessions.sort(key=lambda x: x["created_at"], reverse=True)
     return jsonify(sessions[:10])
@@ -3029,7 +3030,18 @@ def _configure_firebase_logic(token, session):
                 print(f"[CONFIGURE] ✅ Firebase activé (sync): {project_id}")
                 time.sleep(10)
 
-        # Même attente si Google réclame l'acceptation des conditions Firebase
+        def diagnostic_firebase():
+            """Active explicitement l'API Firebase sur le projet : son message d'erreur
+            dit précisément ce que Google reproche (conditions, droits, facturation…)."""
+            try:
+                r = http_requests.post(
+                    f"https://serviceusage.googleapis.com/v1/projects/{project_id}/services/firebase.googleapis.com:enable",
+                    headers={"Authorization": f"Bearer {creds.token}"}, json={}, timeout=30)
+                return f"enable firebase -> {r.status_code} {r.text[:400]}"
+            except Exception as ex:
+                return f"enable firebase -> {ex}"
+
+        # Pas de page à ouvrir pour l'utilisateur : on patiente et on réessaie en silence
         debut_attente = time.time()
         while True:
             try:
@@ -3037,26 +3049,19 @@ def _configure_firebase_logic(token, session):
                 break
             except Exception as e:
                 attente = time.time() - debut_attente
-                droits = "does not have permission" in str(e) or "PERMISSION_DENIED" in str(e)
-                # Google limite les activations par minute : patienter puis réessayer
-                if ("429" in str(e) or "RATE_LIMIT" in str(e) or "Quota exceeded" in str(e)) and attente < 10 * 60:
+                if ("429" in str(e) or "RATE_LIMIT" in str(e) or "Quota exceeded" in str(e)) and attente < 20 * 60:
                     print(f"[CONFIGURE] ⏳ Limite Google par minute atteinte, pause…")
                     time.sleep(65)
                     continue
-                # Projet tout neuf : Google met parfois quelques minutes à donner les droits
-                if droits and attente < 5 * 60:
-                    print(f"[CONFIGURE] ⏳ Droits pas encore propagés, nouvel essai…")
-                    time.sleep(30)
-                    continue
-                # Au-delà, c'est l'accord Firebase qui manque : l'app guide l'utilisateur
-                if not (droits or "Terms of Service" in str(e)) or attente > 20 * 60:
+                droits = "does not have permission" in str(e) or "PERMISSION_DENIED" in str(e)
+                if not droits or attente > 20 * 60:
                     raise
-                print(f"[CONFIGURE] 📜 Conditions Firebase à accepter, attente…")
-                sauvegarder_setup(token, {**session, "status": "tos_required",
-                                          "tos_url": "https://console.firebase.google.com/",
-                                          "project_id": project_id,
-                                          "tos_essai": time.time(), "tos_erreur": str(e)[:300]})
-                time.sleep(15)
+                diag = diagnostic_firebase()
+                print(f"[CONFIGURE] ⏳ addFirebase refusé, nouvel essai… ({diag})")
+                sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id,
+                                          "tos_essai": time.time(), "tos_erreur": str(e)[:300],
+                                          "diag": diag})
+                time.sleep(30)
         sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
 
         # === ÉTAPE 3 : Créer l'app Android ===
