@@ -2905,6 +2905,15 @@ def _configure_firebase_logic(token, session):
             ascii_name = unicodedata.normalize("NFKD", club_name).encode("ascii", "ignore").decode("ascii")
             safe_name = re.sub(r"-+", "-", "".join(c.lower() if c.isalnum() else "-" for c in ascii_name)).strip("-")[:20].strip("-") or "club"
             project_id = f"mp-{safe_name}-{suffix}"
+            try:
+                dispo = build("firebase", "v1beta1", credentials=creds).availableProjects().list().execute()
+                for info in dispo.get("projectInfo", []):
+                    pid = info.get("projectId", "")
+                    if pid.startswith(f"mp-{safe_name}-"):
+                        print(f"[CONFIGURE] ♻️ Reprise du projet laissé par un essai précédent : {pid}")
+                        return pid
+            except Exception as e:
+                print(f"[CONFIGURE] ⚠️ Recherche d'un projet existant : {e}")
             nom_affiche = re.sub(r"[^A-Za-z0-9 '\"!-]", "", ascii_name).strip()
             nom_affiche = (nom_affiche if len(nom_affiche) >= 4 else (nom_affiche + " Club").strip())[:30]
             print(f"[CONFIGURE] 🔨 Création projet GCloud: {project_id}")
@@ -3029,10 +3038,15 @@ def _configure_firebase_logic(token, session):
             except Exception as e:
                 attente = time.time() - debut_attente
                 droits = "does not have permission" in str(e) or "PERMISSION_DENIED" in str(e)
+                # Google limite les activations par minute : patienter puis réessayer
+                if ("429" in str(e) or "RATE_LIMIT" in str(e) or "Quota exceeded" in str(e)) and attente < 10 * 60:
+                    print(f"[CONFIGURE] ⏳ Limite Google par minute atteinte, pause…")
+                    time.sleep(65)
+                    continue
                 # Projet tout neuf : Google met parfois quelques minutes à donner les droits
-                if droits and attente < 3 * 60:
+                if droits and attente < 5 * 60:
                     print(f"[CONFIGURE] ⏳ Droits pas encore propagés, nouvel essai…")
-                    time.sleep(15)
+                    time.sleep(30)
                     continue
                 # Au-delà, c'est l'accord Firebase qui manque : l'app guide l'utilisateur
                 if not (droits or "Terms of Service" in str(e)) or attente > 20 * 60:
