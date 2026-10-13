@@ -3292,7 +3292,8 @@ def _configure_firebase_logic(token, session):
         if "Terms of Service" in erreur:
             erreur = ("Les conditions de Google n'ont pas été acceptées à temps. "
                       "Recommencez la création et touchez « Accepter les conditions Google ».")
-        sauvegarder_setup(token, {**session, "status": "error", "error": erreur})
+        # Repartir de l'état enregistré pour garder le diagnostic (diag, diag_auth)
+        sauvegarder_setup(token, {**(charger_setup(token) or session), "status": "error", "error": erreur})
         with _verrou_creations:
             _creations_lancees.discard(token)  # une nouvelle tentative reste possible
 
