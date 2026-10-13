@@ -2712,7 +2712,7 @@ _diag_auth = {}  # project_id -> dernières réponses de Google (diagnostic)
 def _noter_auth(project_id, message):
     print(f"[AUTH] {project_id}: {message}")
     _diag_auth.setdefault(project_id, []).append(message[:300])
-    _diag_auth[project_id] = _diag_auth[project_id][-8:]
+    _diag_auth[project_id] = _diag_auth[project_id][-20:]
 
 
 def _activer_auth(creds, project_id):
@@ -2723,19 +2723,21 @@ def _activer_auth(creds, project_id):
     """
     import google.auth.transport.requests
     # 1. Initialisation (répond une erreur si c'est déjà fait : sans conséquence)
-    try:
-        r = http_requests.post(
-            f"https://identitytoolkit.googleapis.com/v2/projects/{project_id}/identityPlatform:initializeAuth",
-            headers=_entetes_google(creds, project_id), json={}, timeout=30)
-        _noter_auth(project_id, f"initializeAuth {r.status_code} {r.text[:200]}")
-    except Exception as e:
-        print(f"[AUTH] ⚠️ initializeAuth: {e}")
+    def initialiser():
+        try:
+            r = http_requests.post(
+                f"https://identitytoolkit.googleapis.com/v2/projects/{project_id}/identityPlatform:initializeAuth",
+                headers=_entetes_google(creds, project_id), json={}, timeout=30)
+            _noter_auth(project_id, f"initializeAuth {r.status_code} {r.text[:200]}")
+        except Exception as e:
+            _noter_auth(project_id, f"initializeAuth exception {e}")
+    initialiser()
 
     # 2. Activation anonyme + e-mail, avec nouvelles tentatives (propagation des API)
     corps = {"signIn": {"anonymous": {"enabled": True},
                         "email": {"enabled": True, "passwordRequired": True}}}
     masque = "signIn.anonymous.enabled,signIn.email.enabled,signIn.email.passwordRequired"
-    for tentative in range(6):
+    for tentative in range(10):
         try:
             if not creds.valid and creds.refresh_token:
                 creds.refresh(google.auth.transport.requests.Request())
@@ -2747,6 +2749,9 @@ def _activer_auth(creds, project_id):
                 print(f"[AUTH] ✅ Authentification activée sur {project_id}")
                 return True
             _noter_auth(project_id, f"config {r.status_code} {r.text[:200]}")
+            # Pas encore initialisée (API pas encore active au 1er essai) : réessayer l'initialisation
+            if "CONFIGURATION_NOT_FOUND" in r.text:
+                initialiser()
         except Exception as e:
             print(f"[AUTH] ⏳ Tentative {tentative+1}/6: {e}")
         time.sleep(10)
@@ -2849,6 +2854,8 @@ def _securiser_structure(token, session):
 
     _activer_auth(creds, project_id)
     if not _auth_anonyme_fonctionne(session.get("api_key", ""), project_id):
+        sess = charger_setup(token) or session
+        sauvegarder_setup(token, {**sess, "diag_auth": _diag_auth.get(project_id, [])})
         return False, "L'authentification Firebase ne répond pas : règles laissées telles quelles"
     if not _deployer_regles(creds, project_id, REGLES_STRICTES):
         return False, "Publication des règles impossible"
