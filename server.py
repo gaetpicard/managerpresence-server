@@ -147,6 +147,7 @@ ANDROID_SHA256 = "a54ef037af177fe5e901b4e2db154c3eb1a1323f446cce35286264ba67a09c
 # (sinon la PWA des structures verrouillées ne peut plus lire la base)
 APPCHECK_IMPOSER = os.environ.get("APPCHECK_IMPOSER", "0") == "1"
 
+PWA_DOMAINE = "managerpresence.netlify.app"
 PWA_REFERRERS = [
     "https://managerpresence.netlify.app/*",
     "https://*.netlify.app/*",   # adresses temporaires créées à chaque déploiement
@@ -994,6 +995,19 @@ def pwa_generate():
     expires_at = now + timedelta(seconds=PWA_CODE_VALIDITY)
     expires_at_ms = int(expires_at.timestamp() * 1000)
     
+    # Structures automatiques : config Web + App Check (reCAPTCHA) pour la PWA
+    try:
+        docs = list(db.collection("setup_sessions").where("project_id", "==", project_id).limit(1).stream())
+        sess_pwa = docs[0].to_dict() if docs else {}
+        if sess_pwa.get("web_app_id") and sess_pwa.get("recaptcha_site_key"):
+            firebase_config = {**firebase_config,
+                               "appId": sess_pwa["web_app_id"],
+                               "recaptchaSiteKey": sess_pwa["recaptcha_site_key"]}
+            if sess_pwa.get("web_api_key"):
+                firebase_config["apiKey"] = sess_pwa["web_api_key"]
+    except Exception as e:
+        print(f"[PWA] ⚠️ Config App Check web: {e}")
+
     pwa_data = {
         "projectId": project_id,
         "code": code,
@@ -2614,6 +2628,8 @@ def admin_setups():
             "diag":       d.get("diag", ""),
             "diag_auth":  d.get("diag_auth", []),
             "app_check":  d.get("app_check", ""),
+            "app_check_web": d.get("app_check_web", ""),
+            "recaptcha":  bool(d.get("recaptcha_site_key")),
             "securing_error": d.get("securing_error", ""),
         })
     sessions.sort(key=lambda x: x["created_at"], reverse=True)
@@ -2900,6 +2916,58 @@ def _configurer_app_check(creds, session):
     return False, f"Réglage Play Integrity refusé ({r.status_code})"
 
 
+def _configurer_app_check_web(creds, session):
+    """
+    App Check pour la PWA : clé reCAPTCHA Enterprise (domaine de la PWA) enregistrée sur
+    l'app Web Firebase de la structure. Gratuit sur le plan Spark.
+    Retourne (ok, message, infos) ; infos = {web_app_id, recaptcha_site_key} à garder.
+    """
+    project_id = session.get("project_id", "")
+    numero = session.get("app_id", "").split(":")[1]
+    entetes = _entetes_google(creds, project_id)
+    infos = {k: session[k] for k in ("web_app_id", "recaptcha_site_key") if session.get(k)}
+
+    # 1. App Web de la structure (créée avec le projet)
+    if not infos.get("web_app_id"):
+        r = http_requests.get(f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/webApps",
+                              headers=entetes, timeout=30)
+        _noter_auth(project_id, f"webApps {r.status_code} {r.text[:150]}")
+        apps = (r.json() if r.status_code == 200 else {}).get("apps", [])
+        if not apps:
+            return False, "Aucune app Web sur la structure", infos
+        infos["web_app_id"] = apps[0]["appId"]
+
+    # 2. Clé reCAPTCHA Enterprise limitée au domaine de la PWA
+    if not infos.get("recaptcha_site_key"):
+        r = http_requests.post(
+            f"https://serviceusage.googleapis.com/v1/projects/{project_id}/services/recaptchaenterprise.googleapis.com:enable",
+            headers=entetes, json={}, timeout=30)
+        _noter_auth(project_id, f"enable recaptchaenterprise {r.status_code} {r.text[:150]}")
+        for _ in range(4):
+            time.sleep(10)
+            r = http_requests.post(
+                f"https://recaptchaenterprise.googleapis.com/v1/projects/{project_id}/keys",
+                headers=entetes, timeout=30,
+                json={"displayName": "PWA ManagerPresence",
+                      "webSettings": {"allowedDomains": [PWA_DOMAINE], "integrationType": "SCORE"}})
+            _noter_auth(project_id, f"recaptcha key {r.status_code} {r.text[:150]}")
+            if r.status_code == 200:
+                infos["recaptcha_site_key"] = r.json()["name"].split("/")[-1]
+                break
+        if not infos.get("recaptcha_site_key"):
+            return False, f"Clé reCAPTCHA non créée ({r.status_code})", infos
+
+    # 3. Enregistrer la clé dans App Check pour l'app Web
+    r = http_requests.patch(
+        f"https://firebaseappcheck.googleapis.com/v1/projects/{numero}/apps/{infos['web_app_id']}/recaptchaEnterpriseConfig",
+        headers=entetes, params={"updateMask": "siteKey,tokenTtl"},
+        json={"siteKey": infos["recaptcha_site_key"], "tokenTtl": "86400s"}, timeout=30)
+    _noter_auth(project_id, f"recaptchaEnterpriseConfig {r.status_code} {r.text[:150]}")
+    if r.status_code != 200:
+        return False, f"reCAPTCHA refusé par App Check ({r.status_code})", infos
+    return True, "App Check web configuré", infos
+
+
 def _imposer_app_check(creds, session):
     """Verrouille la base : seules les requêtes portant un jeton App Check valide passent."""
     project_id = session.get("project_id", "")
@@ -2943,11 +3011,17 @@ def _securiser_structure(token, session, preuve_app_check=False):
     if not _auth_anonyme_fonctionne(session.get("api_key", ""), project_id):
         # Projet gratuit : l'authentification exige la facturation → sécurité par App Check
         ok, message = _configurer_app_check(creds, session)
+        ok_web, message_web, infos_web = (False, "non tenté", {})
+        if ok:
+            ok_web, message_web, infos_web = _configurer_app_check_web(creds, session)
         sess = charger_setup(token) or session
-        sauvegarder_setup(token, {**sess, "diag_auth": _diag_auth.get(project_id, []),
-                                  "app_check": message})
+        sauvegarder_setup(token, {**sess, **infos_web, "diag_auth": _diag_auth.get(project_id, []),
+                                  "app_check": message, "app_check_web": message_web})
         if not ok:
             return False, message
+        if not ok_web:
+            # Verrouiller sans App Check web couperait la PWA de cette structure
+            return False, f"App Check web pas prêt : {message_web}"
         if not preuve_app_check:
             return False, "App Check prêt : en attente de la preuve de l'app"
         sauvegarder_setup(token, {**(charger_setup(token) or sess), "app_check": "Prouvé par l'app"})
@@ -3368,6 +3442,7 @@ def _configure_firebase_logic(token, session):
         # sécurisée ensuite (voir plus bas).
         sauvegarder_setup(token, {**session, "status": "securing",
             "project_id": project_id, "app_id": app_id})
+        infos_web = {}
         if not api_key:
             raise Exception("Clé d'API de l'application introuvable")
         securisee = _auth_anonyme_fonctionne(api_key, project_id)
@@ -3392,9 +3467,12 @@ def _configure_firebase_logic(token, session):
                   f"sécurisation au prochain démarrage de l'app")
             # Préparer App Check tout de suite : l'app pourra prouver dès son premier démarrage
             try:
-                ok_ac, msg_ac = _configurer_app_check(creds, {**session, "project_id": project_id,
-                                                              "app_id": app_id})
+                sess_ac = {**session, "project_id": project_id, "app_id": app_id}
+                ok_ac, msg_ac = _configurer_app_check(creds, sess_ac)
                 print(f"[CONFIGURE] {'✅' if ok_ac else '⚠️'} {msg_ac}")
+                if ok_ac:
+                    ok_w, msg_w, infos_web = _configurer_app_check_web(creds, sess_ac)
+                    print(f"[CONFIGURE] {'✅' if ok_w else '⚠️'} {msg_w}")
             except Exception as e:
                 print(f"[CONFIGURE] ⚠️ App Check: {e}")
 
@@ -3415,6 +3493,7 @@ def _configure_firebase_logic(token, session):
             "rules_secured":       securisee,
             "secured_at":          datetime.now().isoformat() if securisee else "",
             "diag_auth":           _diag_auth.get(project_id, []),
+            **infos_web,
         })
         # Le jeton Google ne sert plus une fois la base sécurisée : révoqué et effacé
         # (sinon gardé jusqu'à la sécurisation, cf. _securiser_structure)
