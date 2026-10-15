@@ -2589,7 +2589,7 @@ def setup_secure_rules(token):
             sauvegarder_setup(token, {**sess, "securing_error": message})
 
     threading.Thread(target=travail, daemon=True).start()
-    return jsonify({"success": False, "status": "en_cours",
+    return jsonify({"success": False, "status": "en_cours", "project_id": session.get("project_id"),
                     "derniere_erreur": session.get("securing_error")}), 202
 
 
