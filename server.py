@@ -141,6 +141,12 @@ ANDROID_SHA1 = [
     "C4:9C:EF:7C:53:FA:65:2F:E8:C4:C0:77:AE:B6:84:66:41:B3:45:39",  # clé de release
     "19:10:45:32:72:1D:C5:4E:86:19:D1:94:A5:98:7C:3C:68:1A:78:3E",  # clé de débogage
 ]
+# Empreinte SHA-256 du certificat de signature de l'app (App Check / Play Integrity)
+ANDROID_SHA256 = "a54ef037af177fe5e901b4e2db154c3eb1a1323f446cce35286264ba67a09c9a"
+# Verrou App Check sur la base : n'activer qu'une fois la PWA équipée d'App Check
+# (sinon la PWA des structures verrouillées ne peut plus lire la base)
+APPCHECK_IMPOSER = os.environ.get("APPCHECK_IMPOSER", "0") == "1"
+
 PWA_REFERRERS = [
     "https://managerpresence.netlify.app/*",
     "https://*.netlify.app/*",   # adresses temporaires créées à chaque déploiement
@@ -2573,8 +2579,10 @@ def setup_secure_rules(token):
     if not session.get("project_id"):
         return jsonify({"error": "project_id manquant"}), 400
 
+    preuve = bool((request.get_json(silent=True) or {}).get("app_check_ok"))
+
     def travail():
-        ok, message = _securiser_structure(token, session)
+        ok, message = _securiser_structure(token, session, preuve_app_check=preuve)
         print(f"[SECURE-RULES] {'✅' if ok else '⚠️'} {session.get('project_id')}: {message}")
         if not ok:
             sess = charger_setup(token) or session
@@ -2605,6 +2613,8 @@ def admin_setups():
             "tos_erreur": d.get("tos_erreur", ""),
             "diag":       d.get("diag", ""),
             "diag_auth":  d.get("diag_auth", []),
+            "app_check":  d.get("app_check", ""),
+            "securing_error": d.get("securing_error", ""),
         })
     sessions.sort(key=lambda x: x["created_at"], reverse=True)
     return jsonify(sessions[:request.args.get("n", 10, type=int)])
@@ -2837,7 +2847,84 @@ def _oublier_jeton_google(token, session):
     sauvegarder_setup(token, sess)
 
 
-def _securiser_structure(token, session):
+def _configurer_app_check(creds, session):
+    """
+    Prépare App Check (Play Integrity) sur la structure, sans rien bloquer :
+    API Play Integrity + App Check, empreinte SHA-256 de l'app, et réglages adaptés
+    à une app installée hors Google Play. Gratuit, possible sans facturation.
+    Retourne (ok, message).
+    """
+    project_id = session.get("project_id", "")
+    app_id = session.get("app_id", "")
+    if not project_id or not app_id:
+        return False, "project_id ou app_id manquant"
+    numero = app_id.split(":")[1] if app_id.count(":") >= 3 else ""
+    if not numero:
+        return False, f"app_id inattendu : {app_id}"
+    import google.auth.transport.requests
+    if not creds.valid and creds.refresh_token:
+        creds.refresh(google.auth.transport.requests.Request())
+    entetes = _entetes_google(creds, project_id)
+
+    # 1. API nécessaires
+    for api in ("playintegrity.googleapis.com", "firebaseappcheck.googleapis.com"):
+        r = http_requests.post(
+            f"https://serviceusage.googleapis.com/v1/projects/{project_id}/services/{api}:enable",
+            headers=entetes, json={}, timeout=30)
+        _noter_auth(project_id, f"enable {api} {r.status_code} {r.text[:150]}")
+    time.sleep(10)
+
+    # 2. Empreinte SHA-256 du certificat de l'app (409 = déjà enregistrée)
+    r = http_requests.post(
+        f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/sha",
+        headers=entetes, json={"shaHash": ANDROID_SHA256, "certType": "SHA_256"}, timeout=30)
+    _noter_auth(project_id, f"sha256 {r.status_code} {r.text[:150]}")
+    if r.status_code not in (200, 409):
+        return False, f"Empreinte de l'app non enregistrée ({r.status_code})"
+
+    # 3. Play Integrity : app installée hors Google Play acceptée, appareils non certifiés aussi
+    #    (le contrôle qui compte reste : bon nom de paquet + bonne signature)
+    for _ in range(4):
+        r = http_requests.patch(
+            f"https://firebaseappcheck.googleapis.com/v1/projects/{numero}/apps/{app_id}/playIntegrityConfig",
+            headers=entetes, params={"updateMask": "tokenTtl,appIntegrity,deviceIntegrity,accountDetails"},
+            json={"tokenTtl": "86400s",
+                  "appIntegrity": {"allowUnrecognizedVersion": True},
+                  "deviceIntegrity": {"minDeviceRecognitionLevel": "NO_INTEGRITY"},
+                  "accountDetails": {"requireLicensed": False}},
+            timeout=30)
+        _noter_auth(project_id, f"playIntegrityConfig {r.status_code} {r.text[:150]}")
+        if r.status_code == 200:
+            return True, "App Check configuré"
+        time.sleep(15)
+    return False, f"Réglage Play Integrity refusé ({r.status_code})"
+
+
+def _imposer_app_check(creds, session):
+    """Verrouille la base : seules les requêtes portant un jeton App Check valide passent."""
+    project_id = session.get("project_id", "")
+    numero = session.get("app_id", "").split(":")[1]
+    r = http_requests.patch(
+        f"https://firebaseappcheck.googleapis.com/v1/projects/{numero}/services/firestore.googleapis.com",
+        headers=_entetes_google(creds, project_id), params={"updateMask": "enforcementMode"},
+        json={"enforcementMode": "ENFORCED"}, timeout=30)
+    _noter_auth(project_id, f"enforce firestore {r.status_code} {r.text[:150]}")
+    return r.status_code == 200
+
+
+REGLES_APP_CHECK = """rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Base verrouillée par App Check : seule l'app officielle (bonne signature) y accède
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
+"""
+
+
+def _securiser_structure(token, session, preuve_app_check=False):
     """
     Met une structure dans l'état sûr : authentification active ET vérifiée, puis
     règles strictes. Ne resserre JAMAIS les règles si l'authentification ne marche pas
@@ -2854,9 +2941,27 @@ def _securiser_structure(token, session):
 
     _activer_auth(creds, project_id)
     if not _auth_anonyme_fonctionne(session.get("api_key", ""), project_id):
+        # Projet gratuit : l'authentification exige la facturation → sécurité par App Check
+        ok, message = _configurer_app_check(creds, session)
         sess = charger_setup(token) or session
-        sauvegarder_setup(token, {**sess, "diag_auth": _diag_auth.get(project_id, [])})
-        return False, "L'authentification Firebase ne répond pas : règles laissées telles quelles"
+        sauvegarder_setup(token, {**sess, "diag_auth": _diag_auth.get(project_id, []),
+                                  "app_check": message})
+        if not ok:
+            return False, message
+        if not preuve_app_check:
+            return False, "App Check prêt : en attente de la preuve de l'app"
+        sauvegarder_setup(token, {**(charger_setup(token) or sess), "app_check": "Prouvé par l'app"})
+        if not APPCHECK_IMPOSER:
+            return False, "App Check prouvé par l'app : verrou en attente (PWA pas encore équipée)"
+        if not _imposer_app_check(creds, session):
+            return False, "Verrou App Check refusé"
+        if not _deployer_regles(creds, project_id, REGLES_APP_CHECK):
+            return False, "Publication des règles impossible"
+        sess = charger_setup(token) or session
+        sauvegarder_setup(token, {**sess, "rules_secured": True, "securite": "app_check",
+                                  "secured_at": datetime.now().isoformat()})
+        _oublier_jeton_google(token, {**sess, "rules_secured": True})
+        return True, "Base verrouillée par App Check"
     if not _deployer_regles(creds, project_id, REGLES_STRICTES):
         return False, "Publication des règles impossible"
 
@@ -3285,6 +3390,13 @@ def _configure_firebase_logic(token, session):
                 raise Exception("Les règles de la base n'ont pas pu être publiées")
             print(f"[CONFIGURE] ⚠️ Auth pas encore prête : base ouverte jusqu'au {fin.date()}, "
                   f"sécurisation au prochain démarrage de l'app")
+            # Préparer App Check tout de suite : l'app pourra prouver dès son premier démarrage
+            try:
+                ok_ac, msg_ac = _configurer_app_check(creds, {**session, "project_id": project_id,
+                                                              "app_id": app_id})
+                print(f"[CONFIGURE] {'✅' if ok_ac else '⚠️'} {msg_ac}")
+            except Exception as e:
+                print(f"[CONFIGURE] ⚠️ App Check: {e}")
 
         # === ÉTAPE 6 : Licence trial + finaliser ===
         licence = creer_licence_trial(project_id, club_name)
