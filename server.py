@@ -51,6 +51,9 @@ FIREBASE_CREDENTIALS = os.environ.get("FIREBASE_CREDENTIALS", "")
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLIC_KEY = os.environ.get("STRIPE_PUBLIC_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+# Lien de connexion au portail client (Stripe → Paramètres → Portail client → « Lien de connexion »).
+# Le client s'y identifie par un code reçu sur son e-mail : personne d'autre ne peut gérer son abonnement.
+STRIPE_PORTAL_LOGIN_URL = os.environ.get("STRIPE_PORTAL_LOGIN_URL", "")
 
 # OAuth Google — Création de structures simplifiée
 GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -150,7 +153,7 @@ APPCHECK_IMPOSER = os.environ.get("APPCHECK_IMPOSER", "0") == "1"
 PWA_DOMAINE = "managerpresence.netlify.app"
 PWA_REFERRERS = [
     "https://managerpresence.netlify.app/*",
-    "https://*.netlify.app/*",   # adresses temporaires créées à chaque déploiement
+    # Pas de "https://*.netlify.app/*" : n'importe quel site Netlify aurait pu utiliser la clé
 ]
 
 # ============================================================
@@ -351,7 +354,7 @@ def formater_licence_response(licence):
     
     # Message selon le statut
     if not est_actif:
-        message = "Votre licence a expiré. Souscrivez un abonnement pour continuer."
+        message = "Votre licence a expiré."
     elif jours_restants <= 7:
         message = f"⚠️ Votre licence expire dans {jours_restants} jour(s) !"
     elif jours_restants <= 30 and licence.get("plan") == "trial":
@@ -601,13 +604,27 @@ def stripe_portal():
     if not customer_id:
         return jsonify({"error": "Aucun abonnement Stripe associé"}), 400
     
+    # Le projectId n'est pas un secret : remettre directement le lien du portail
+    # laisserait n'importe qui résilier l'abonnement d'un club.
+    if STRIPE_PORTAL_LOGIN_URL:
+        # Stripe identifie lui-même le client par un code envoyé à son e-mail
+        return jsonify({"success": True, "url": STRIPE_PORTAL_LOGIN_URL})
+    
     try:
         portal_session = stripe.billing_portal.Session.create(
             customer=customer_id,
             return_url=PWA_CANCEL_URL
         )
-        
-        return jsonify({"success": True, "url": portal_session.url})
+        # Sinon, le lien part à l'e-mail de notification de la structure.
+        # Code 403 : les applis déjà installées affichent alors le texte « error ».
+        envoyer_rapport_stripe(
+            project_id,
+            sujet="🔧 Gérer votre abonnement",
+            titre="🔧 Gérer votre abonnement",
+            corps_html=f'<a href="{portal_session.url}">Ouvrir le portail de votre abonnement</a><br>'
+                       f'Ce lien est personnel et expire rapidement.'
+        )
+        return jsonify({"error": "Le lien de gestion de l'abonnement a été envoyé à l'e-mail de notification de la structure."}), 403
         
     except stripe.error.StripeError as e:
         print(f"Erreur Stripe Portal: {e}")
@@ -624,7 +641,10 @@ def stripe_webhook():
     
     if STRIPE_WEBHOOK_SECRET:
         try:
-            event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+            stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+            # Signature vérifiée : on relit le JSON brut, car depuis stripe-python 16
+            # les objets Stripe ne sont plus des dict (.get() lève une erreur)
+            event = json.loads(payload)
         except ValueError as e:
             print(f"Webhook payload invalide: {e}")
             return jsonify({"error": "Invalid payload"}), 400
@@ -632,7 +652,10 @@ def stripe_webhook():
             print(f"Webhook signature invalide: {e}")
             return jsonify({"error": "Invalid signature"}), 400
     else:
-        event = json.loads(payload)
+        # Sans secret, impossible de prouver que l'événement vient de Stripe :
+        # l'accepter permettrait à n'importe qui de s'offrir un abonnement.
+        print("[STRIPE WEBHOOK] STRIPE_WEBHOOK_SECRET manquant — événement refusé")
+        return jsonify({"error": "Webhook non configuré"}), 503
     
     event_type = event.get("type", "")
     data_object = event.get("data", {}).get("object", {})
@@ -669,10 +692,10 @@ def stripe_webhook():
     
     elif event_type == "invoice.payment_succeeded":
         invoice = data_object
-        subscription_id = invoice.get("subscription")
+        subscription_id = abonnement_de_facture(invoice)
         if subscription_id:
             try:
-                subscription = stripe.Subscription.retrieve(subscription_id)
+                subscription = en_dict(stripe.Subscription.retrieve(subscription_id))
                 project_id = subscription.get("metadata", {}).get("projectId")
                 if project_id:
                     handle_payment_succeeded(project_id, subscription)
@@ -681,11 +704,11 @@ def stripe_webhook():
     
     elif event_type == "invoice.payment_failed":
         invoice = data_object
-        subscription_id = invoice.get("subscription")
+        subscription_id = abonnement_de_facture(invoice)
         customer_email = invoice.get("customer_email", "")
         if subscription_id:
             try:
-                subscription = stripe.Subscription.retrieve(subscription_id)
+                subscription = en_dict(stripe.Subscription.retrieve(subscription_id))
                 project_id = subscription.get("metadata", {}).get("projectId")
                 if project_id:
                     handle_payment_failed(project_id, customer_email)
@@ -777,12 +800,41 @@ def envoyer_rapport_stripe(project_id, sujet, titre, corps_html, montant=None, p
         print(f"[RAPPORT STRIPE] Erreur envoi: {e}")
 
 
+def en_dict(objet):
+    """Objet Stripe → dict ordinaire (depuis stripe-python 16, les objets ne sont plus des dict)."""
+    return objet.to_dict() if hasattr(objet, "to_dict") else objet
+
+def fin_de_periode(subscription):
+    """Fin de la période payée (timestamp), quelle que soit la version de l'API Stripe.
+    Avant 2025-03-31.basil : subscription.current_period_end ; depuis : sur chaque ligne (items)."""
+    fin = subscription.get("current_period_end")
+    if fin:
+        return fin
+    try:
+        fins = [it.get("current_period_end") for it in subscription["items"]["data"]]
+        fins = [f for f in fins if f]
+        return max(fins) if fins else None
+    except Exception:
+        return None
+
+def abonnement_de_facture(invoice):
+    """Identifiant de l'abonnement d'une facture, ancienne ou nouvelle API Stripe
+    (depuis 2025-03-31.basil : invoice.parent.subscription_details.subscription)."""
+    sub = invoice.get("subscription")
+    if sub:
+        return sub if isinstance(sub, str) else sub.get("id")
+    try:
+        sub = invoice["parent"]["subscription_details"]["subscription"]
+        return sub if isinstance(sub, str) else sub.get("id")
+    except Exception:
+        return None
+
 def handle_subscription_created(project_id, subscription_id, customer_id):
     """Gère la création d'un nouvel abonnement"""
     print(f"[STRIPE] Nouvel abonnement pour {project_id}: {subscription_id}")
     
     try:
-        subscription = stripe.Subscription.retrieve(subscription_id)
+        subscription = en_dict(stripe.Subscription.retrieve(subscription_id))
         price_id = subscription["items"]["data"][0]["price"]["id"]
         
         if price_id in [STRIPE_PRICES["premium_monthly"], STRIPE_PRICES["premium_yearly"]]:
@@ -801,7 +853,9 @@ def handle_subscription_created(project_id, subscription_id, customer_id):
             licence["maxCadres"] = plan_config["max_cadres"]
             licence["maxMembres"] = plan_config.get("max_membres", 9999)
             licence["maxCreneaux"] = plan_config.get("max_creneaux", 9999)
-            licence["dateExpiration"] = (datetime.now() + timedelta(days=jours)).isoformat()
+            fin = fin_de_periode(subscription)
+            licence["dateExpiration"] = (datetime.fromtimestamp(fin) if fin
+                                         else datetime.now() + timedelta(days=jours)).isoformat()
             licence["actif"] = True
             licence["stripeCustomerId"] = customer_id
             licence["stripeSubscriptionId"] = subscription_id
@@ -854,7 +908,7 @@ def handle_subscription_updated(project_id, subscription):
                 licence["maxCreneaux"] = plan_config.get("max_creneaux", 9999)
                 licence["actif"] = True
                 
-                period_end = subscription.get("current_period_end")
+                period_end = fin_de_periode(subscription)
                 if period_end:
                     licence["dateExpiration"] = datetime.fromtimestamp(period_end).isoformat()
             
@@ -914,7 +968,7 @@ def handle_payment_succeeded(project_id, subscription):
 
     licence = charger_licence(project_id)
     if licence:
-        period_end = subscription.get("current_period_end")
+        period_end = fin_de_periode(subscription)
         if period_end:
             licence["dateExpiration"] = datetime.fromtimestamp(period_end).isoformat()
         licence["actif"] = True
