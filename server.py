@@ -95,6 +95,10 @@ db = firestore.client()
 from mail_absences import creer_blueprint as creer_blueprint_mail
 app.register_blueprint(creer_blueprint_mail(db, SERVER_BASE_URL, ADMIN_TOKEN))
 
+# Mails de support (plantages, formulaire, changement d'adresse) : plus de mot de passe dans l'APK
+from support_mails import creer_blueprint as creer_blueprint_support
+app.register_blueprint(creer_blueprint_support(BREVO_API_KEY))
+
 # ============================================================
 # DÉFINITION DES PLANS (mis à jour avec limites)
 # ============================================================
