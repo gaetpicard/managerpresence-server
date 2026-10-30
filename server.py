@@ -91,6 +91,10 @@ else:
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
+# Mails d'absence envoyés depuis le Gmail de la structure (autorisation gmail.send)
+from mail_absences import creer_blueprint as creer_blueprint_mail
+app.register_blueprint(creer_blueprint_mail(db, SERVER_BASE_URL, ADMIN_TOKEN))
+
 # ============================================================
 # DÉFINITION DES PLANS (mis à jour avec limites)
 # ============================================================
@@ -3628,7 +3632,7 @@ def privacy_policy():
 </head>
 <body>
   <h1>🏔️ ManagerPresence<br>Politique de confidentialité</h1>
-  <p class="date">Dernière mise à jour : 12 avril 2026</p>
+  <p class="date">Dernière mise à jour : 30 octobre 2026</p>
 
   <h2>1. Présentation</h2>
   <p>ManagerPresence est une application Android de gestion des présences destinée
@@ -3658,6 +3662,24 @@ def privacy_policy():
     L'accès OAuth est utilisé une seule fois lors de la création de votre espace,
     puis les permissions sont révocables depuis votre compte Google à tout moment.
   </div>
+
+  <h2>3 bis. Mails d'absence (autorisation facultative « Envoyer des e-mails en votre nom »)</h2>
+  <p>Si vous l'activez, ManagerPresence envoie depuis le compte Gmail que vous choisissez
+  les mails d'absence de votre structure : quand un encadrant valide l'appel, les parents
+  d'un membre absent sans avoir prévenu reçoivent un message.</p>
+  <ul>
+    <li>Seule l'autorisation <strong>gmail.send</strong> (envoi) est demandée : nous ne pouvons
+    ni lire, ni supprimer, ni consulter vos mails, vos contacts ou vos fichiers.</li>
+    <li>Le jeton correspondant est conservé <strong>chiffré</strong> sur notre serveur, uniquement
+    pour envoyer ces mails. Il n'est ni partagé ni utilisé à d'autres fins.</li>
+    <li>Données traitées au moment de l'envoi : prénom, nom et adresse email du destinataire,
+    date et nom de la séance. Elles ne sont pas conservées après l'envoi.</li>
+    <li>Vous pouvez retirer cette autorisation à tout moment depuis l'application
+    (Paramètres → Emails) ou depuis votre compte Google (Sécurité → Applications tierces).</li>
+  </ul>
+  <p>L'utilisation des informations reçues des API Google respecte les
+  <a href="https://developers.google.com/terms/api-services-user-data-policy">règles relatives
+  aux données utilisateur des services API Google</a>, y compris les exigences d'utilisation limitée.</p>
 
   <h2>4. Hébergement des données</h2>
   <ul>
