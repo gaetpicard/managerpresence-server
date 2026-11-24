@@ -1578,8 +1578,12 @@ def creer_projet_firebase(token_data, club_name, gmail):
         )
 
         # 1. Générer un project_id unique
+        # Règles Google : 6 à 30 caractères, minuscules ASCII, chiffres et tirets, commence par une lettre.
+        # « mp- » (3) + nom (17 max) + « - » + 8 hex = 29 au plus. Accents retirés (« é » → « e »).
         suffix    = secrets.token_hex(4)
-        safe_name = "".join(c.lower() if c.isalnum() else "-" for c in club_name)[:20].strip("-")
+        sans_accent = unicodedata.normalize("NFKD", club_name).encode("ascii", "ignore").decode()
+        safe_name = re.sub(r"-+", "-", "".join(c if c.isalnum() else "-" for c in sans_accent.lower()))
+        safe_name = safe_name.strip("-")[:17].strip("-") or "club"
         project_id = f"mp-{safe_name}-{suffix}"
 
         # 2. Créer le projet Google Cloud
@@ -3115,7 +3119,7 @@ def _configure_firebase_logic(token, session):
             suffix = secrets.token_hex(4)
             # Google n'accepte que l'ASCII : « maître » → « maitre »
             ascii_name = unicodedata.normalize("NFKD", club_name).encode("ascii", "ignore").decode("ascii")
-            safe_name = re.sub(r"-+", "-", "".join(c.lower() if c.isalnum() else "-" for c in ascii_name)).strip("-")[:20].strip("-") or "club"
+            safe_name = re.sub(r"-+", "-", "".join(c.lower() if c.isalnum() else "-" for c in ascii_name)).strip("-")[:17].strip("-") or "club"  # mp- + 17 + - + 8 = 29 ≤ 30 (limite Google)
             project_id = f"mp-{safe_name}-{suffix}"
             try:
                 dispo = build("firebase", "v1beta1", credentials=creds).availableProjects().list().execute()
