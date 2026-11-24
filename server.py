@@ -990,7 +990,9 @@ def pwa_generate():
     firebase_config = data["firebaseConfig"]
     
     licence = charger_licence(project_id)
-    if licence:
+    # Appli gratuite (phase de lancement) : aucune restriction de licence sur l'accès PWA.
+    # Mettre APPLI_GRATUITE=0 sur Render le jour où un modèle payant est en place.
+    if licence and os.environ.get("APPLI_GRATUITE", "1") != "1":
         plan = licence.get("plan", "trial")
         if plan == "standard":
             return jsonify({"error": "L'accès PWA nécessite une licence Trial ou Premium"}), 403

@@ -330,10 +330,11 @@ def creer_blueprint(db, server_base_url, admin_token):
                 if r.status_code == 200:
                     envoyes += 1
                 else:
-                    print(f"[MAIL] ❌ Gmail {r.status_code} ({project_id}): {r.text[:200]}")
+                    # Pas le corps de la réponse : il peut citer une adresse
+                    print(f"[MAIL] ❌ Gmail {r.status_code} ({project_id})")
                     echecs.append(f"{prenom} {nom}".strip())
             except Exception as ex:
-                print(f"[MAIL] ❌ Envoi ({project_id}): {ex}")
+                print(f"[MAIL] ❌ Envoi ({project_id}): {type(ex).__name__}")
                 echecs.append(f"{prenom} {nom}".strip())
 
         db.collection("mail_autorisations").document(project_id).update(
@@ -425,7 +426,7 @@ def creer_blueprint(db, server_base_url, admin_token):
                     _revoquer(_dechiffrer(ancienne["refresh_chiffre"]))
                 except Exception:
                     pass
-            print(f"[MAIL] ✅ {project_id} autorisé ({email})")
+            print(f"[MAIL] ✅ {project_id} autorisé")
         except Exception as e:
             print(f"[MAIL] ❌ Callback: {e}")
             return _page("ManagerPresence", f"<h1>⚠️</h1><p>{_t(lang, 'err_technique')}</p>", "#C62828"), 500
