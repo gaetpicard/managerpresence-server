@@ -3803,10 +3803,18 @@ def suppression_compte():
   <h1>🏔️ ManagerPresence<br>Supprimer un compte ou une structure</h1>
 
   <h2>1. Supprimer toute une structure (administrateur)</h2>
-  <p>Dans l'application : <strong>⚙ Paramètres → Mon Club → « Supprimer le club et toutes ses données »</strong>.
-  Toutes les données de la structure (membres, présences,
-  notes, séances, sorties, comptes des encadrants, journal) sont supprimées définitivement. Pensez à exporter
-  vos données avant si vous souhaitez les garder.</p>
+  <p>Dans l'application : <strong>⚙ Paramètres → Mon Club → « Supprimer le club et toutes ses données »</strong>,
+  puis confirmer avec le <strong>mot de passe super utilisateur</strong> (ou l'empreinte digitale si elle est activée).</p>
+  <ul>
+    <li>Une <strong>sauvegarde est d'abord créée sur le téléphone</strong> : supprimez ce fichier vous-même si vous ne
+    souhaitez pas le garder.</li>
+    <li>Sont ensuite supprimées définitivement toutes les données de la structure : membres, présences, notes,
+    séances, sorties, disponibilités, encadrants, messages, invitations et journal.</li>
+    <li>Restent sur le compte Google de la structure : le <strong>projet Firebase</strong> lui-même et les
+    <strong>identifiants de connexion</strong> des encadrants. Pour tout effacer, supprimez le projet depuis la
+    <a href="https://console.firebase.google.com">console Firebase</a> (Paramètres du projet → Supprimer le projet),
+    ou écrivez-nous (point 4).</li>
+  </ul>
 
   <h2>2. Supprimer le compte d'un encadrant</h2>
   <p>L'administrateur de la structure supprime l'encadrant depuis <strong>⚙ → Réglages administrateur → Cadres</strong> :
