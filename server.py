@@ -3748,7 +3748,8 @@ def privacy_policy():
   et d'opposition.</p>
   <ul>
     <li>Pour les données d'un membre (élève, salarié…) : adressez-vous à la structure, responsable de ces données.</li>
-    <li>Suppression complète d'une structure : Paramètres → Mon Club → Supprimer ma structure.</li>
+    <li>Suppression complète d'une structure : Paramètres → Mon Club → « Supprimer le club et toutes ses données »
+    (détails : <a href="/suppression">page de suppression</a>).</li>
     <li>Export : depuis l'application (exports et sauvegardes).</li>
     <li>Pour les données traitées par ManagerPresence (section 4) : écrivez au développeur.</li>
     <li>Vous pouvez aussi saisir la CNIL (<a href="https://www.cnil.fr">www.cnil.fr</a>).</li>
@@ -3776,6 +3777,58 @@ def privacy_policy():
   <p style="color: #aaa; font-size: 12px; text-align: center;">
     ManagerPresence © 2026
   </p>
+</body>
+</html>"""
+
+
+@app.route("/suppression", methods=["GET"])
+def suppression_compte():
+    """Suppression d'un compte ou d'une structure — page exigée par Google Play"""
+    return """<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Supprimer son compte — ManagerPresence</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto;
+           padding: 40px 20px; color: #333; line-height: 1.7; }
+    h1 { color: #1565C0; border-bottom: 2px solid #1565C0; padding-bottom: 12px; }
+    h2 { color: #1565C0; margin-top: 32px; }
+    .card { background: #F5F5F5; border-radius: 8px; padding: 16px; margin: 16px 0; }
+    a { color: #1565C0; }
+  </style>
+</head>
+<body>
+  <h1>🏔️ ManagerPresence<br>Supprimer un compte ou une structure</h1>
+
+  <h2>1. Supprimer toute une structure (administrateur)</h2>
+  <p>Dans l'application : <strong>⚙ Paramètres → Mon Club → « Supprimer le club et toutes ses données »</strong>.
+  Toutes les données de la structure (membres, présences,
+  notes, séances, sorties, comptes des encadrants, journal) sont supprimées définitivement. Pensez à exporter
+  vos données avant si vous souhaitez les garder.</p>
+
+  <h2>2. Supprimer le compte d'un encadrant</h2>
+  <p>L'administrateur de la structure supprime l'encadrant depuis <strong>⚙ → Réglages administrateur → Cadres</strong> :
+  son accès et son pass sont révoqués. Un encadrant qui souhaite la suppression de son compte s'adresse
+  à l'administrateur de sa structure.</p>
+
+  <h2>3. Données d'un membre (élève, salarié…)</h2>
+  <p>Elles appartiennent à la structure : adressez votre demande à celle-ci, qui peut supprimer la fiche
+  depuis l'application.</p>
+
+  <h2>4. Nous écrire</h2>
+  <div class="card">
+    Si vous ne pouvez plus accéder à l'application, écrivez à
+    <a href="mailto:gaetpicard@gmail.com?subject=Suppression%20ManagerPresence">gaetpicard@gmail.com</a>
+    en indiquant le nom de la structure. Nous supprimons alors, sous 30 jours, les données que nous détenons
+    (adresse e-mail de l'administrateur, nom de la structure, autorisation d'envoi des mails) et vous indiquons
+    comment supprimer le projet Firebase de la structure depuis son compte Google.
+  </div>
+
+  <p>Voir aussi la <a href="/privacy">politique de confidentialité</a>.</p>
+  <hr style="margin-top: 40px; border: none; border-top: 1px solid #eee;">
+  <p style="color: #aaa; font-size: 12px; text-align: center;">ManagerPresence © 2026</p>
 </body>
 </html>"""
 
