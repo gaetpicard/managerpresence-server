@@ -3638,94 +3638,143 @@ def privacy_policy():
 </head>
 <body>
   <h1>🏔️ ManagerPresence<br>Politique de confidentialité</h1>
-  <p class="date">Dernière mise à jour : 30 octobre 2026</p>
+  <p class="date">Dernière mise à jour : 24 novembre 2026</p>
 
   <h2>1. Présentation</h2>
-  <p>ManagerPresence est une application Android de gestion des présences destinée
-  aux structures (clubs, écoles, entreprises). Elle est développée et maintenue par
-  Gaëtan Picard (gaetpicard@gmail.com).</p>
+  <p>ManagerPresence est une application Android (avec une interface web) de gestion des présences
+  pour les clubs, écoles, associations et entreprises (« structures »). Elle est développée et maintenue
+  par Gaëtan Picard (<a href="mailto:gaetpicard@gmail.com">gaetpicard@gmail.com</a>). L'application est gratuite
+  et ne contient aucune publicité.</p>
 
-  <h2>2. Données collectées</h2>
-  <p>Lors de la création d'un espace, nous collectons :</p>
+  <h2>2. Qui est responsable de quoi</h2>
   <ul>
-    <li><strong>Adresse email Google (Gmail)</strong> — pour vous identifier et vous envoyer
-    les informations de connexion</li>
-    <li><strong>Nom de la structure</strong> — pour personnaliser votre espace</li>
+    <li><strong>La structure</strong> (son administrateur) est responsable du traitement des données de ses membres,
+    encadrants et salariés : c'est elle qui les saisit et décide de leur usage.</li>
+    <li><strong>ManagerPresence</strong> fournit l'outil et traite seulement les quelques données décrites
+    à la section 4, pour faire fonctionner le service.</li>
   </ul>
-  <p>Les données de votre structure (membres, présences, séances) sont hébergées dans
-  votre propre projet Firebase, créé sur votre compte Google. Nous n'avons aucun accès
-  à ces données.</p>
 
-  <h2>3. Utilisation de Google OAuth</h2>
-  <p>ManagerPresence utilise Google OAuth uniquement pour :</p>
+  <h2>3. Les données de la structure restent chez elle</h2>
+  <p>Membres, présences, notes, séances, sorties, disponibilités, messages entre encadrants et journal
+  d'audit sont enregistrés dans le <strong>propre projet Firebase de la structure</strong>, créé sur son compte Google.
+  Le développeur n'y a pas accès.</p>
   <ul>
-    <li>Vous authentifier de manière sécurisée</li>
-    <li>Créer un projet Firebase sur votre compte Google Cloud</li>
-    <li>Configurer automatiquement votre base de données Firestore</li>
+    <li>Création automatique : base hébergée en <strong>France (Google Cloud europe-west9, Paris)</strong>.</li>
+    <li>Création manuelle (tutoriel) : la structure choisit elle-même l'emplacement de sa base.</li>
+    <li>Les mots de passe des encadrants sont gérés par Firebase Authentication (chiffrés) et ne sont jamais
+    enregistrés dans la base.</li>
   </ul>
+  <p>Ces données peuvent concerner des <strong>mineurs</strong> (élèves d'un club ou d'une école). Il appartient
+  à la structure d'en informer les familles et de recueillir les autorisations nécessaires.</p>
+
+  <h2>4. Données traitées par ManagerPresence</h2>
   <div class="card">
-    <strong>Important :</strong> Nous ne stockons pas votre token Google.
-    L'accès OAuth est utilisé une seule fois lors de la création de votre espace,
-    puis les permissions sont révocables depuis votre compte Google à tout moment.
+  <strong>a) Création de l'espace et licence</strong> — adresse Gmail de l'administrateur, nom de la structure,
+  identifiant du projet Firebase et dates d'utilisation. Utilisées pour créer l'espace, envoyer les informations
+  de connexion et gérer l'accès au service.
+  </div>
+  <div class="card">
+  <strong>b) Mails d'absence (facultatif)</strong> — si la structure l'active, quand un encadrant valide l'appel,
+  un mail part depuis le compte Gmail de la structure vers les contacts d'un membre absent sans avoir prévenu.
+  Le serveur reçoit, le temps de l'envoi, le prénom et le nom du membre, l'adresse du destinataire, la date et
+  le nom de la séance : <strong>rien de cela n'est conservé après l'envoi</strong>. Le serveur garde seulement
+  l'adresse Gmail d'envoi, l'autorisation d'envoi chiffrée et un compteur des envois du jour.
+  Ses journaux techniques ne contiennent ni adresse ni contenu de mail.
+  </div>
+  <div class="card">
+  <strong>c) Accès depuis un ordinateur</strong> — un code temporaire (valable quelques minutes) est créé sur le
+  serveur avec les paramètres de connexion de la structure, puis effacé.
+  </div>
+  <div class="card">
+  <strong>d) Messages au développeur et rapports de plantage</strong> — un message envoyé depuis le bouton ⓘ
+  (avec le nom de la structure et l'adresse de réponse indiquée) est transmis par e-mail au développeur.
+  En cas de plantage, un rapport technique est envoyé de la même façon : version de l'application, modèle du
+  téléphone, nom de la structure et trace de l'erreur, sans données de membres. Les rapports de plantage
+  se désactivent dans les réglages de l'application.
   </div>
 
-  <h2>3 bis. Mails d'absence (autorisation facultative « Envoyer des e-mails en votre nom »)</h2>
-  <p>Si vous l'activez, ManagerPresence envoie depuis le compte Gmail que vous choisissez
-  les mails d'absence de votre structure : quand un encadrant valide l'appel, les parents
-  d'un membre absent sans avoir prévenu reçoivent un message.</p>
+  <h2>5. Services Google utilisés</h2>
   <ul>
-    <li>Seule l'autorisation <strong>gmail.send</strong> (envoi) est demandée : nous ne pouvons
-    ni lire, ni supprimer, ni consulter vos mails, vos contacts ou vos fichiers.</li>
-    <li>Le jeton correspondant est conservé <strong>chiffré</strong> sur notre serveur, uniquement
-    pour envoyer ces mails. Il n'est ni partagé ni utilisé à d'autres fins.</li>
-    <li>Données traitées au moment de l'envoi : prénom, nom et adresse email du destinataire,
-    date et nom de la séance. Elles ne sont pas conservées après l'envoi.</li>
-    <li>Vous pouvez retirer cette autorisation à tout moment depuis l'application
-    (Paramètres → Emails) ou depuis votre compte Google (Sécurité → Applications tierces).</li>
+    <li><strong>Création de l'espace</strong> (autorisations Firebase et Google Cloud) : utilisée une seule fois,
+    pour créer et configurer le projet Firebase de la structure. Le jeton n'est pas conservé.</li>
+    <li><strong>Envoi des mails d'absence</strong> (autorisation <em>gmail.send</em>, facultative) : envoi
+    uniquement ; ManagerPresence ne peut ni lire, ni supprimer les mails, ni accéder aux contacts ou fichiers.
+    Révocable à tout moment dans l'application (Paramètres → Emails) ou dans le compte Google.</li>
+    <li><strong>Synchronisation avec Google Contacts</strong> (autorisation <em>contacts.readonly</em>, facultative) :
+    lecture seule, faite directement depuis le téléphone ou le navigateur de l'administrateur vers la base de la
+    structure. Rien ne passe par le serveur de ManagerPresence et le jeton n'est pas conservé. Seuls les libellés
+    choisis et les décisions sur les numéros en double sont enregistrés, dans la base de la structure.</li>
   </ul>
   <p>L'utilisation des informations reçues des API Google respecte les
-  <a href="https://developers.google.com/terms/api-services-user-data-policy">règles relatives
-  aux données utilisateur des services API Google</a>, y compris les exigences d'utilisation limitée.</p>
+  <a href="https://developers.google.com/terms/api-services-user-data-policy">règles relatives aux données
+  utilisateur des services API Google</a>, y compris les exigences d'utilisation limitée.</p>
 
-  <h2>4. Hébergement des données</h2>
+  <h2>6. Autorisations du téléphone</h2>
   <ul>
-    <li>Votre projet Firebase est hébergé en <strong>France (europe-west9 — Paris)</strong></li>
-    <li>Les sessions de création sont temporaires (24h) et supprimées automatiquement</li>
-    <li>Aucune donnée personnelle n'est revendue ou partagée avec des tiers</li>
+    <li><strong>Appareil photo</strong> : lire le QR code pour rejoindre une structure.</li>
+    <li><strong>Agenda</strong> (facultatif) : ajouter dans l'agenda du téléphone les séances et sorties
+    auxquelles l'encadrant a répondu « Oui ». Rien n'est lu ni envoyé ailleurs.</li>
+    <li><strong>Notifications, alarmes et rappels, plein écran</strong> : rappels de disponibilité et alarme
+    quand l'appel n'est pas fait.</li>
+    <li><strong>Empreinte digitale</strong> (facultatif) : gérée par Android ; l'empreinte ne quitte jamais le téléphone.</li>
+    <li><strong>Fichiers</strong> : importer une liste de membres, exporter ou sauvegarder, uniquement les fichiers
+    choisis par l'utilisateur.</li>
+    <li><strong>SMS</strong> : préparer les SMS d'absence, envoyés depuis l'application SMS du téléphone
+    (version installée hors Google Play : envoi direct si la structure l'active).</li>
   </ul>
 
-  <h2>5. Vos droits</h2>
-  <p>Conformément au RGPD, vous disposez des droits suivants :</p>
+  <h2>7. Prestataires</h2>
   <ul>
-    <li><strong>Droit d'accès</strong> — vous pouvez consulter vos données depuis l'application</li>
-    <li><strong>Droit de suppression</strong> — vous pouvez supprimer votre espace depuis
-    Paramètres → Mon Club → Supprimer ma structure</li>
-    <li><strong>Droit de portabilité</strong> — vos données peuvent être exportées
-    depuis l'application</li>
+    <li><strong>Google</strong> (Firebase, Google Cloud, Gmail) : bases des structures, authentification, envoi des mails.</li>
+    <li><strong>Render</strong> : hébergement du serveur de ManagerPresence.</li>
+    <li><strong>Brevo</strong> : envoi des e-mails de service (création d'espace, messages au développeur).</li>
+    <li><strong>Netlify</strong> : hébergement de l'interface web.</li>
+    <li><strong>GitHub</strong> : téléchargement des mises à jour (version installée hors Google Play).</li>
+    <li><strong>data.education.gouv.fr</strong> et <strong>OpenHolidays</strong> : calendriers des vacances
+    scolaires (aucune donnée personnelle envoyée).</li>
+  </ul>
+  <p>Aucune donnée n'est vendue, louée ni utilisée à des fins publicitaires.</p>
+
+  <h2>8. Durée de conservation</h2>
+  <ul>
+    <li>Données de la structure : tant que la structure les garde ; supprimées avec la structure.</li>
+    <li>Données de création et de licence : tant que l'espace existe.</li>
+    <li>Autorisation d'envoi des mails : jusqu'à son retrait.</li>
+    <li>Codes d'accès ordinateur : quelques minutes. Sessions de création : 24 heures.</li>
   </ul>
 
-  <h2>6. Cookies et traceurs</h2>
-  <p>ManagerPresence n'utilise aucun cookie de tracking ou publicitaire.
-  Les seules données temporaires stockées sont nécessaires au fonctionnement
-  de l'application (session de création, token d'authentification).</p>
-
-  <h2>7. Sécurité</h2>
+  <h2>9. Vos droits</h2>
+  <p>Conformément au RGPD, vous disposez d'un droit d'accès, de rectification, d'effacement, de portabilité
+  et d'opposition.</p>
   <ul>
-    <li>Communications chiffrées en HTTPS</li>
-    <li>Mots de passe Super Utilisateur hashés en SHA-256</li>
-    <li>Règles de sécurité Firestore configurées par structure</li>
+    <li>Pour les données d'un membre (élève, salarié…) : adressez-vous à la structure, responsable de ces données.</li>
+    <li>Suppression complète d'une structure : Paramètres → Mon Club → Supprimer ma structure.</li>
+    <li>Export : depuis l'application (exports et sauvegardes).</li>
+    <li>Pour les données traitées par ManagerPresence (section 4) : écrivez au développeur.</li>
+    <li>Vous pouvez aussi saisir la CNIL (<a href="https://www.cnil.fr">www.cnil.fr</a>).</li>
   </ul>
 
-  <h2>8. Contact</h2>
-  <p>Pour toute question relative à vos données personnelles :</p>
+  <h2>10. Cookies et traceurs</h2>
+  <p>Aucun cookie publicitaire ni outil de mesure d'audience. Seules les données nécessaires au fonctionnement
+  (session de connexion) sont gardées sur l'appareil.</p>
+
+  <h2>11. Sécurité</h2>
+  <ul>
+    <li>Communications chiffrées (HTTPS).</li>
+    <li>Mots de passe gérés par Firebase Authentication ; mot de passe maître (super utilisateur) haché.</li>
+    <li>Règles d'accès Firestore propres à chaque structure ; journal horodaté des actions des encadrants.</li>
+    <li>Exports marqués d'un filigrane (structure, date, auteur).</li>
+  </ul>
+
+  <h2>12. Contact</h2>
   <div class="card">
-    📧 <a href="mailto:gaetpicard@gmail.com">gaetpicard@gmail.com</a><br>
-    🏔️ ManagerPresence — Application de gestion des présences
+    📧 <a href="mailto:gaetpicard@gmail.com">gaetpicard@gmail.com</a> — ou depuis l'application, bouton ⓘ<br>
+    🏔️ ManagerPresence — application de gestion des présences
   </div>
 
   <hr style="margin-top: 40px; border: none; border-top: 1px solid #eee;">
   <p style="color: #aaa; font-size: 12px; text-align: center;">
-    ManagerPresence © 2026 — Données hébergées en France (Firebase europe-west9)
+    ManagerPresence © 2026
   </p>
 </body>
 </html>"""
