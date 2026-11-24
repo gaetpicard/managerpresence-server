@@ -3781,6 +3781,57 @@ def privacy_policy():
 </html>"""
 
 
+@app.route("/structure/supprimer", methods=["POST"])
+def structure_supprimer():
+    """
+    Efface ce que le serveur garde sur une structure dont le projet Firebase vient d'être supprimé
+    depuis l'appli (licence, autorisation d'envoi des mails, codes d'accès ordinateur).
+    Sécurité : le jeton Google fourni doit donner accès au projet ET Google doit confirmer que le
+    projet est en cours de suppression (DELETE_REQUESTED). Personne d'autre ne peut déclencher l'effacement.
+    """
+    data = request.get_json(silent=True) or {}
+    project_id = str(data.get("projectId", "")).strip()
+    jeton = str(data.get("accessToken", "")).strip()
+    if not project_id or not jeton:
+        return jsonify({"error": "projectId et accessToken requis"}), 400
+    try:
+        r = http_requests.get(f"https://cloudresourcemanager.googleapis.com/v1/projects/{project_id}",
+                              headers={"Authorization": f"Bearer {jeton}"}, timeout=20)
+    except Exception as e:
+        print(f"[SUPPRESSION] ❌ Google injoignable : {type(e).__name__}")
+        return jsonify({"error": "Google injoignable"}), 502
+    if r.status_code != 200:
+        print(f"[SUPPRESSION] ⛔ {project_id} : accès refusé par Google ({r.status_code})")
+        return jsonify({"error": "Accès au projet refusé"}), 403
+    if r.json().get("lifecycleState") != "DELETE_REQUESTED":
+        return jsonify({"error": "Le projet n'est pas en cours de suppression"}), 409
+
+    effaces = []
+    try:
+        db.collection("licences").document(project_id).delete(); effaces.append("licence")
+    except Exception as e:
+        print(f"[SUPPRESSION] ⚠️ licence {project_id} : {type(e).__name__}")
+    try:
+        from mail_absences import _revoquer, _dechiffrer
+        doc = db.collection("mail_autorisations").document(project_id).get()
+        if doc.exists:
+            chiffre = (doc.to_dict() or {}).get("refresh_chiffre")
+            if chiffre:
+                try: _revoquer(_dechiffrer(chiffre))
+                except Exception: pass
+            db.collection("mail_autorisations").document(project_id).delete(); effaces.append("mails")
+    except Exception as e:
+        print(f"[SUPPRESSION] ⚠️ mails {project_id} : {type(e).__name__}")
+    try:
+        for d in db.collection("pwa_codes").where("projectId", "==", project_id).stream():
+            d.reference.delete()
+        effaces.append("codes")
+    except Exception as e:
+        print(f"[SUPPRESSION] ⚠️ codes {project_id} : {type(e).__name__}")
+    print(f"[SUPPRESSION] 🗑️ {project_id} : {', '.join(effaces) or 'rien'}")
+    return jsonify({"ok": True, "effaces": effaces})
+
+
 @app.route("/suppression", methods=["GET"])
 def suppression_compte():
     """Suppression d'un compte ou d'une structure — page exigée par Google Play"""
@@ -3806,14 +3857,16 @@ def suppression_compte():
   <p>Dans l'application : <strong>⚙ Paramètres → Mon Club → « Supprimer le club et toutes ses données »</strong>,
   puis confirmer avec le <strong>mot de passe super utilisateur</strong> (ou l'empreinte digitale si elle est activée).</p>
   <ul>
-    <li>Une <strong>sauvegarde est d'abord créée sur le téléphone</strong> : supprimez ce fichier vous-même si vous ne
-    souhaitez pas le garder.</li>
-    <li>Sont ensuite supprimées définitivement toutes les données de la structure : membres, présences, notes,
-    séances, sorties, disponibilités, encadrants, messages, invitations et journal.</li>
-    <li>Restent sur le compte Google de la structure : le <strong>projet Firebase</strong> lui-même et les
-    <strong>identifiants de connexion</strong> des encadrants. Pour tout effacer, supprimez le projet depuis la
-    <a href="https://console.firebase.google.com">console Firebase</a> (Paramètres du projet → Supprimer le projet),
-    ou écrivez-nous (point 4).</li>
+    <li>Vous choisissez de garder ou non une <strong>sauvegarde sur le téléphone</strong>.</li>
+    <li>Vous vous connectez ensuite avec le <strong>compte Google propriétaire</strong> de la structure.
+    Sont alors supprimés : toutes les données (membres, présences, notes, séances, sorties, disponibilités,
+    encadrants, messages, journal), les <strong>identifiants de connexion des encadrants</strong> et le
+    <strong>projet Firebase</strong> lui-même. Google l'efface définitivement sous 30 jours.</li>
+    <li>Le serveur de ManagerPresence efface en même temps ce qu'il garde sur la structure (licence,
+    autorisation d'envoi des mails, codes d'accès).</li>
+    <li>Sans connexion Google, seul le contenu est effacé ; le projet reste alors sur le compte Google
+    de la structure et peut être supprimé depuis la <a href="https://console.firebase.google.com">console Firebase</a>
+    (Paramètres du projet → Supprimer le projet).</li>
   </ul>
 
   <h2>2. Supprimer le compte d'un encadrant</h2>
