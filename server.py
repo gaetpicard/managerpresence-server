@@ -2777,7 +2777,7 @@ def _activer_auth(creds, project_id):
     corps = {"signIn": {"anonymous": {"enabled": True},
                         "email": {"enabled": True, "passwordRequired": True}}}
     masque = "signIn.anonymous.enabled,signIn.email.enabled,signIn.email.passwordRequired"
-    for tentative in range(10):
+    for tentative in range(20):  # ≈ 5 min : la propagation de l'API peut être lente
         try:
             if not creds.valid and creds.refresh_token:
                 creds.refresh(google.auth.transport.requests.Request())
@@ -2793,8 +2793,9 @@ def _activer_auth(creds, project_id):
             if "CONFIGURATION_NOT_FOUND" in r.text:
                 initialiser()
         except Exception as e:
-            print(f"[AUTH] ⏳ Tentative {tentative+1}/6: {e}")
-        time.sleep(10)
+            print(f"[AUTH] ⏳ Tentative {tentative+1}/20: {e}")
+        time.sleep(15)
+    _noter_auth(project_id, "abandon après 20 tentatives")
     return False
 
 
@@ -3362,10 +3363,24 @@ def _configure_firebase_logic(token, session):
         for api in ("firebaserules.googleapis.com", "identitytoolkit.googleapis.com"):
             try:
                 su_svc.services().enable(name=f"projects/{project_id}/services/{api}").execute()
-                print(f"[CONFIGURE] ✅ API activée: {api}")
+                print(f"[CONFIGURE] ✅ API demandée: {api}")
             except Exception as e:
                 print(f"[CONFIGURE] ⚠️ Activation {api}: {e}")
-        time.sleep(10)  # propagation des API
+        # Attendre que Google confirme (l'activation est asynchrone : 10 s ne suffisaient pas
+        # toujours → authentification jamais configurée, « CONFIGURATION_NOT_FOUND » côté app)
+        for api in ("firebaserules.googleapis.com", "identitytoolkit.googleapis.com"):
+            for _ in range(36):  # jusqu'à 3 min
+                try:
+                    etat = su_svc.services().get(name=f"projects/{project_id}/services/{api}").execute().get("state")
+                    if etat == "ENABLED":
+                        print(f"[CONFIGURE] ✅ API active: {api}")
+                        break
+                except Exception as e:
+                    print(f"[CONFIGURE] ⏳ {api}: {type(e).__name__}")
+                time.sleep(5)
+            else:
+                print(f"[CONFIGURE] ⚠️ {api} pas confirmée après 3 min")
+        time.sleep(10)  # propagation interne de Google
 
         # === ÉTAPE 4c : Authentification (initialisation + anonyme + e-mail) ===
         sauvegarder_setup(token, {**session, "status": "auth_check",
