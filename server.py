@@ -3313,7 +3313,7 @@ def _configure_firebase_logic(token, session):
                                 "tos_url": (f"https://accounts.google.com/AccountChooser?Email={urllib.parse.quote(gmail_fb)}"
                                             f"&continue={urllib.parse.quote(page, safe='')}") if gmail_fb else page})
                 sauvegarder_setup(token, {**session, **maj})
-                time.sleep(15 if accord else 30)
+                time.sleep(30)  # ≤ 2 essais/min : au-delà, Google renvoie « limite par minute »
         sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
 
         # === ÉTAPE 3 : Créer l'app Android ===
