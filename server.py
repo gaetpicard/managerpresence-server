@@ -2576,7 +2576,14 @@ def setup_ping(token):
                 print(f"[CONFIGURE] 🔁 Relance de la création en attente {token[:8]}…")
                 threading.Thread(target=_configure_firebase_logic,
                                  args=(token, session), daemon=True).start()
-        resp["tos_url"] = session.get("tos_url") or "https://console.cloud.google.com/"
+        # Page des seules conditions Google Cloud (pas l'accueil de la console, qui affiche
+        # l'offre « 300 $ de crédits » et donne l'impression de devoir payer), avec le bon compte.
+        page_cgu = "https://console.cloud.google.com/tos?id=cloud"
+        gmail_cgu = session.get("gmail", "")
+        defaut = (f"https://accounts.google.com/AccountChooser?Email={urllib.parse.quote(gmail_cgu)}"
+                  f"&continue={urllib.parse.quote(page_cgu, safe='')}") if gmail_cgu else page_cgu
+        resp["tos_url"] = session.get("tos_url") or defaut
+        resp["tos_type"] = session.get("tos_type") or "cloud"
     if complete:
         resp.update({
             "project_id":          session.get("project_id", ""),
@@ -2755,6 +2762,11 @@ def _noter_auth(project_id, message):
     _diag_auth[project_id] = _diag_auth[project_id][-20:]
 
 
+# Projets où Google refuse l'authentification faute de facturation (forfait gratuit Spark) :
+# inutile d'insister, l'app propose au club de l'activer lui-même (tuto « Renforcer la sécurité »).
+_auth_facturation_requise = set()
+
+
 def _activer_auth(creds, project_id):
     """
     Initialise Firebase Authentication puis active les connexions anonyme et e-mail.
@@ -2769,9 +2781,14 @@ def _activer_auth(creds, project_id):
                 f"https://identitytoolkit.googleapis.com/v2/projects/{project_id}/identityPlatform:initializeAuth",
                 headers=_entetes_google(creds, project_id), json={}, timeout=30)
             _noter_auth(project_id, f"initializeAuth {r.status_code} {r.text[:200]}")
+            if "BILLING_NOT_ENABLED" in r.text:
+                _auth_facturation_requise.add(project_id)
         except Exception as e:
             _noter_auth(project_id, f"initializeAuth exception {e}")
     initialiser()
+    if project_id in _auth_facturation_requise:
+        print(f"[AUTH] ⏭️ {project_id} : authentification réservée aux projets avec facturation → tuto dans l'app")
+        return False
 
     # 2. Activation anonyme + e-mail, avec nouvelles tentatives (propagation des API)
     corps = {"signIn": {"anonymous": {"enabled": True},
@@ -2803,7 +2820,7 @@ def _auth_anonyme_fonctionne(api_key, project_id=""):
     Preuve par l'essai : une connexion anonyme avec la clé de l'app réussit-elle ?
     On se présente comme l'app Android pour passer la restriction de la clé.
     """
-    if not api_key:
+    if not api_key or project_id in _auth_facturation_requise:
         return False
     entetes = {"X-Android-Package": ANDROID_PACKAGE,
                "X-Android-Cert": ANDROID_SHA1[0].replace(":", "").upper()}
@@ -3191,7 +3208,8 @@ def _configure_firebase_logic(token, session):
                 if "Terms of Service" not in str(e) or time.time() - debut_attente > 20 * 60:
                     raise
                 print(f"[CONFIGURE] 📜 Conditions Google Cloud à accepter, attente…")
-                sauvegarder_setup(token, {**session, "status": "tos_required",
+                sauvegarder_setup(token, {**session, "status": "tos_required", "tos_type": "cloud",
+                                          "tos_url": None,
                                           "tos_essai": time.time(), "tos_erreur": str(e)[:300]})
                 time.sleep(15)
         
@@ -3279,11 +3297,22 @@ def _configure_firebase_logic(token, session):
                 if not droits or attente > 20 * 60:
                     raise
                 diag = diagnostic_firebase()
-                print(f"[CONFIGURE] ⏳ addFirebase refusé, nouvel essai… ({diag})")
-                sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id,
-                                          "tos_essai": time.time(), "tos_erreur": str(e)[:300],
-                                          "diag": diag})
-                time.sleep(30)
+                # Compte Google qui n'a jamais utilisé Firebase : Google exige qu'il ajoute Firebase
+                # une fois lui-même (conditions Firebase), aucune API ne peut le faire à sa place.
+                # Après 1 min (propagation normale des droits), l'app le guide pas à pas vers la page
+                # exacte de son projet ; on réessaie en continu et la création reprend seule.
+                accord = attente > 60
+                print(f"[CONFIGURE] ⏳ addFirebase refusé{' — accord Firebase demandé' if accord else ''}, nouvel essai… ({diag[:120]})")
+                maj = {"project_id": project_id, "tos_essai": time.time(),
+                       "tos_erreur": str(e)[:300], "diag": diag, "status": "configuring"}
+                if accord:
+                    page = f"https://console.firebase.google.com/project/{project_id}/overview"
+                    gmail_fb = session.get("gmail", "")
+                    maj.update({"status": "tos_required", "tos_type": "firebase",
+                                "tos_url": (f"https://accounts.google.com/AccountChooser?Email={urllib.parse.quote(gmail_fb)}"
+                                            f"&continue={urllib.parse.quote(page, safe='')}") if gmail_fb else page})
+                sauvegarder_setup(token, {**session, **maj})
+                time.sleep(15 if accord else 30)
         sauvegarder_setup(token, {**session, "status": "configuring", "project_id": project_id})
 
         # === ÉTAPE 3 : Créer l'app Android ===
@@ -3530,6 +3559,12 @@ def _configure_firebase_logic(token, session):
         if "Terms of Service" in erreur:
             erreur = ("Les conditions de Google n'ont pas été acceptées à temps. "
                       "Recommencez la création et touchez « Accepter les conditions Google ».")
+        elif "addFirebase" in erreur and ("does not have permission" in erreur or "PERMISSION_DENIED" in erreur):
+            erreur = ("Google attend encore votre accord pour Firebase (étape unique). "
+                      "Touchez « Réessayer » puis suivez le guide jusqu'au bout.")
+        elif "HttpError" in erreur or "Traceback" in erreur:
+            erreur = ("Google n'a pas pu terminer la création pour le moment. "
+                      "Touchez « Réessayer » dans quelques minutes : votre espace déjà préparé est repris.")
         # Repartir de l'état enregistré pour garder le diagnostic (diag, diag_auth)
         sauvegarder_setup(token, {**(charger_setup(token) or session), "status": "error", "error": erreur})
         with _verrou_creations:
