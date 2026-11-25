@@ -3665,8 +3665,9 @@ def privacy_policy():
   <ul>
     <li>Création automatique : base hébergée en <strong>France (Google Cloud europe-west9, Paris)</strong>.</li>
     <li>Création manuelle (tutoriel) : la structure choisit elle-même l'emplacement de sa base.</li>
-    <li>Les mots de passe des encadrants sont gérés par Firebase Authentication (chiffrés) et ne sont jamais
-    enregistrés dans la base.</li>
+    <li>Les mots de passe des encadrants ne sont jamais enregistrés en clair : ils sont soit vérifiés par
+    Google (Firebase Authentication, si la structure l'a activé), soit conservés dans la base de la structure sous
+    forme d'empreinte irréversible (PBKDF2 salé).</li>
   </ul>
   <p>Ces données peuvent concerner des <strong>mineurs</strong> (élèves d'un club ou d'une école). Il appartient
   à la structure d'en informer les familles et de recueillir les autorisations nécessaires.</p>
@@ -3766,7 +3767,9 @@ def privacy_policy():
   <h2>11. Sécurité</h2>
   <ul>
     <li>Communications chiffrées (HTTPS).</li>
-    <li>Mots de passe gérés par Firebase Authentication ; mot de passe maître (super utilisateur) haché.</li>
+    <li>Mots de passe des encadrants vérifiés par Firebase Authentication (option) ou conservés sous forme
+    d'empreinte irréversible (PBKDF2 salé) ; essais répétés bloqués ; mot de passe maître (super utilisateur) haché.</li>
+    <li>Accès à la base réservé à l'application officielle, non modifiée (Firebase App Check).</li>
     <li>Règles d'accès Firestore propres à chaque structure ; journal horodaté des actions des encadrants.</li>
     <li>Exports marqués d'un filigrane (structure, date, auteur).</li>
   </ul>
