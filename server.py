@@ -2576,9 +2576,10 @@ def setup_ping(token):
                 print(f"[CONFIGURE] 🔁 Relance de la création en attente {token[:8]}…")
                 threading.Thread(target=_configure_firebase_logic,
                                  args=(token, session), daemon=True).start()
-        # Page des seules conditions Google Cloud (pas l'accueil de la console, qui affiche
-        # l'offre « 300 $ de crédits » et donne l'impression de devoir payer), avec le bon compte.
-        page_cgu = "https://console.cloud.google.com/tos?id=cloud"
+        # Accueil de la console : c'est la fenêtre « Bienvenue » (pays + case + Accepter) qui
+        # enregistre l'accord. ⚠️ Pas /tos?id=cloud : simple texte juridique, sans bouton.
+        # Ouvert avec le bon compte ; le guide de l'app dit d'ignorer l'offre « 300 $ ».
+        page_cgu = "https://console.cloud.google.com/"
         gmail_cgu = session.get("gmail", "")
         defaut = (f"https://accounts.google.com/AccountChooser?Email={urllib.parse.quote(gmail_cgu)}"
                   f"&continue={urllib.parse.quote(page_cgu, safe='')}") if gmail_cgu else page_cgu
